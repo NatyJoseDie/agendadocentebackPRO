@@ -1,0 +1,23 @@
+# Contraseñas y datos sensibles
+contrasesupabase.txt
+*.txt
+
+# Variables de entorno (claves de API)
+.env
+.env.local
+.env.production
+
+# Dependencias
+node_modules/
+
+# Build
+dist/
+build/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Sistema operativo
+.DS_Store
+Thumbs.db

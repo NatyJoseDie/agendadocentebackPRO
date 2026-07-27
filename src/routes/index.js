@@ -14,6 +14,7 @@ import necesidadesRouter from './necesidades.js'
 import contactosRouter from './contactos.js'
 import licenciasRouter from './licencias.js'
 import libroTemasRouter from './libro_temas.js'
+import ocrRouter from './ocr.js'
 
 const router = Router()
 
@@ -32,5 +33,6 @@ router.use('/necesidades', necesidadesRouter)
 router.use('/contactos', contactosRouter)
 router.use('/licencias', licenciasRouter)
 router.use('/libro-temas', libroTemasRouter)
+router.use('/ocr', ocrRouter)
 
 export default router

@@ -2,6 +2,10 @@
 contrasesupabase.txt
 *.txt
 
+# Claves de servicios externos (Google, etc.)
+google-key.json
+*.traineddata
+
 # Variables de entorno (claves de API)
 .env
 .env.local

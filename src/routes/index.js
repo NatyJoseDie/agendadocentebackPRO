@@ -16,6 +16,7 @@ import licenciasRouter from './licencias.js'
 import libroTemasRouter from './libro_temas.js'
 import ocrRouter from './ocr.js'
 import pagosRouter from './pagos.js'
+import adminRouter from './admin.js'
 
 const router = Router()
 
@@ -36,5 +37,6 @@ router.use('/licencias', licenciasRouter)
 router.use('/libro-temas', libroTemasRouter)
 router.use('/ocr', ocrRouter)
 router.use('/pagos', pagosRouter)
+router.use('/admin', adminRouter)
 
 export default router

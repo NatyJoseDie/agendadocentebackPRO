@@ -270,3 +270,24 @@ CREATE TABLE IF NOT EXISTS condiciones_especiales (
 
 ALTER TABLE condiciones_especiales ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "necesidades_all_own" ON condiciones_especiales FOR ALL USING (auth.uid() = docente_id);
+
+-- ─────────────────────────────────────────
+-- 12. TABLA: pagos (Suscripciones y cobros de Mercado Pago)
+-- ─────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS pagos (
+  id            UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  docente_id    UUID REFERENCES docentes(id) ON DELETE CASCADE NOT NULL,
+  mp_payment_id TEXT UNIQUE,
+  monto         NUMERIC(10,2) NOT NULL,
+  moneda        TEXT DEFAULT 'ARS',
+  estado        TEXT NOT NULL,
+  metodo_pago   TEXT,
+  plan          TEXT NOT NULL,
+  fecha_pago    TIMESTAMPTZ DEFAULT NOW(),
+  expira_at     TIMESTAMPTZ,
+  created_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE pagos ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "docentes_ver_sus_pagos" ON pagos FOR SELECT USING (auth.uid() = docente_id);
+

@@ -44,9 +44,11 @@ Se configuró un trigger en Supabase que detecta los primeros 10 registros (excl
 - `is_premium = true`
 
 **Flujo de vencimiento:**
-1. Día 120: Cuenta pasa a modo Solo Lectura (30 días de gracia).
-2. Día 140: Aviso por mail/WhatsApp "quedan 10 días".
-3. Día 150: Datos archivados definitivamente.
+1. Al vencer los 4 meses: Cuenta pasa a modo Solo Lectura durante 30 días.
+2. Día 140: Aviso por mail/WhatsApp "quedan 10 días" (pendiente de implementar).
+3. Al finalizar los 30 días de gracia: La cuenta pasa al plan gratuito y conserva sus datos.
+
+El backend inicia diariamente el proceso de vencimientos al arrancar. Las escrituras de cuentas con un plan pago vencido quedan bloqueadas durante la gracia.
 
 #### 🗃️ Cambios en Base de Datos (Supabase)
 
@@ -126,5 +128,5 @@ MERCADO_PAGO_ACCESS_TOKEN=APP_USR-xxxx
 
 - [ ] Probar webhook de MP apuntando a la URL de Render en producción.
 - [ ] Implementar envío de email/WhatsApp automático al día 120, 140 y 150 del VIP.
-- [ ] Configurar cron job para pasar cuentas vencidas a modo Solo Lectura automáticamente.
+- [ ] Probar el ciclo de vencimiento completo con cuentas de prueba en producción.
 - [ ] Invitar a los 10 docentes beta pioneros.

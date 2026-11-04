@@ -42,7 +42,10 @@ const PLANES_CONFIG = {
  * Genera el link de pago en Mercado Pago para el plan y ciclo elegido
  * Body: { plan: 'pro' | 'premium', ciclo: 'mensual' | 'anual' }
  */
-router.post('/crear-preferencia', requireAuth, async (req, res) => {
+router.post('/crear-preferencia', (req, _res, next) => {
+  req.skipSubscriptionWriteCheck = true
+  next()
+}, requireAuth, async (req, res) => {
   try {
     const { plan = 'pro', ciclo = 'anual' } = req.body
 

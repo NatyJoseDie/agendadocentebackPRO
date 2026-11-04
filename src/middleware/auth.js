@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '../config/supabase.js'
+import { requireWritable } from './requireWritable.js'
 
 /**
  * Middleware de autenticación:
@@ -21,5 +22,12 @@ export const requireAuth = async (req, res, next) => {
 
   req.user = user
   req.token = token
+  if (
+    !req.skipSubscriptionWriteCheck &&
+    ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)
+  ) {
+    return requireWritable(req, res, next)
+  }
+
   next()
 }

@@ -16,6 +16,20 @@ API REST que sirve al frontend de Agenda Docente PRO. Gestiona autenticación (v
 
 ---
 
+### 📅 4 de Noviembre de 2026 — 16:14 (Argentina)
+
+#### ✅ Migración, permisos de Supabase y verificación de producción
+
+- Ejecutada en Supabase la migración `schema/migrations/20261104_subscription_write_protection.sql`, que configura el período de solo lectura, la activación de suscripciones y las notificaciones VIP.
+- Corregidos permisos faltantes para que `service_role` pueda consultar y actualizar `docentes`, y consultar `pagos`. Los permisos de actualización directa de docentes para `authenticated` permanecen revocados.
+- Confirmado que el proceso diario de vencimientos consulta Supabase y termina sin errores.
+- Verificados los endpoints de producción:
+  - `GET /api/health` responde `status: "ok"`.
+  - `GET /api/health/ready` responde `status: "ready"` con base de datos, pagos y notificaciones disponibles.
+- Desplegada en Render la versión `56e4d4d`, con actualizaciones compatibles de dependencias. El último reporte de Render indicó 6 vulnerabilidades (5 moderadas y 1 alta); no se aplicó `npm audit fix --force`.
+
+---
+
 ### 📅 29 de Octubre de 2026
 
 #### 💳 Integración con Mercado Pago
@@ -130,6 +144,7 @@ FRONTEND_URL=https://DOMINIO-PUBLICO-DEL-FRONTEND
 BACKEND_PUBLIC_URL=https://DOMINIO-PUBLICO-DE-RENDER
 RESEND_API_KEY=re_xxxx
 RESEND_FROM_EMAIL=Agenda Docente <avisos@tu-dominio-verificado.com>
+RESEND_REPLY_TO_EMAIL=tu-correo-de-soporte@gmail.com
 ```
 
 ---
@@ -153,6 +168,7 @@ FRONTEND_URL=https://DOMINIO-PUBLICO-DEL-FRONTEND
 BACKEND_PUBLIC_URL=https://DOMINIO-PUBLICO-DE-RENDER
 RESEND_API_KEY=re_xxxx
 RESEND_FROM_EMAIL=Agenda Docente <avisos@tu-dominio-verificado.com>
+RESEND_REPLY_TO_EMAIL=tu-correo-de-soporte@gmail.com
 ```
 
 `CORS_ORIGIN` acepta varios dominios separados por coma. La URL pública del backend
@@ -163,7 +179,7 @@ explícitamente `MERCADO_PAGO_ENVIRONMENT` (`sandbox` o `production`).
 - `GET /api/health`: comprueba que el proceso responde.
 - `GET /api/health/ready`: comprueba Supabase, el esquema de notificaciones y la función transaccional de pagos.
 - En Mercado Pago, configurá la URL `https://DOMINIO-PUBLICO-DE-RENDER/api/pagos/webhook` y copiá el secreto de firma a `MERCADO_PAGO_WEBHOOK_SECRET`.
-- Para enviar email, verificá el dominio remitente en Resend y configurá `RESEND_API_KEY` y `RESEND_FROM_EMAIL` en Render. Las notificaciones dentro de la agenda siguen funcionando sin esas credenciales.
+- Para enviar email, verificá el dominio remitente en Resend y configurá `RESEND_API_KEY` y `RESEND_FROM_EMAIL` en Render. `RESEND_REPLY_TO_EMAIL` es opcional y recibe las respuestas de los docentes. Las notificaciones dentro de la agenda siguen funcionando sin esas credenciales.
 - Ejecutá en Supabase SQL Editor [`schema/migrations/20261104_subscription_write_protection.sql`](./schema/migrations/20261104_subscription_write_protection.sql). La migración conserva la lectura durante la gracia, bloquea las escrituras directas, protege los planes y crea la tabla y función transaccional de notificaciones/pagos.
 - Revisá [`INSTRUCCIONES_FRONTEND.md`](./INSTRUCCIONES_FRONTEND.md) antes de ajustar o volver a desplegar el frontend.
 

@@ -8,8 +8,17 @@ const URL_RESEND = 'https://api.resend.com/emails'
 async function enviarEmailResend({ email, asunto, mensaje }) {
   const apiKey = process.env.RESEND_API_KEY
   const from = process.env.RESEND_FROM_EMAIL
+  const replyTo = process.env.RESEND_REPLY_TO_EMAIL
 
   if (!apiKey || !from || !email) return false
+
+  const emailPayload = {
+    from,
+    to: [email],
+    subject: asunto,
+    text: `${mensaje}\n\n${process.env.FRONTEND_URL || ''}`,
+  }
+  if (replyTo) emailPayload.reply_to = replyTo
 
   const response = await fetch(URL_RESEND, {
     method: 'POST',
@@ -17,12 +26,7 @@ async function enviarEmailResend({ email, asunto, mensaje }) {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      from,
-      to: [email],
-      subject: asunto,
-      text: `${mensaje}\n\n${process.env.FRONTEND_URL || ''}`,
-    }),
+    body: JSON.stringify(emailPayload),
   })
 
   if (!response.ok) throw new Error(`Resend respondió con HTTP ${response.status}.`)

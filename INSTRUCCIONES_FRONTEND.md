@@ -91,7 +91,8 @@ Crear el indicador/centro de notificaciones en el frontend usando la API del bac
   crea solamente el aviso más reciente para no inundar la cuenta.
 - Los avisos en la aplicación no dependen de la configuración de email. Para el email,
   el backend usa Resend; `RESEND_API_KEY` y `RESEND_FROM_EMAIL` se configuran solo en
-  Render, con un remitente verificado.
+  Render, con un remitente verificado. `RESEND_REPLY_TO_EMAIL` puede apuntar al buzón
+  de soporte para que las respuestas de los docentes lleguen allí.
 
 El frontend debe actualizar el indicador al iniciar sesión y al volver a la agenda,
 mostrar los avisos no leídos y ofrecer una acción para marcarlos como leídos.

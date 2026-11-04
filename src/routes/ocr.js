@@ -1,22 +1,34 @@
 import { Router } from 'express';
 import multer from 'multer';
+import { requireAuth } from '../middleware/auth.js'
 
 const router = Router();
 
-// Configuración de Multer
-const storage = multer.memoryStorage();
-const upload = multer({ storage: storage });
+const MAX_IMAGE_SIZE_BYTES = 10 * 1024 * 1024
+const MIME_TYPES_PERMITIDOS = new Set(['image/jpeg', 'image/png', 'image/webp'])
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_IMAGE_SIZE_BYTES, files: 1 },
+  fileFilter: (_req, file, callback) => {
+    if (!MIME_TYPES_PERMITIDOS.has(file.mimetype)) {
+      const error = new Error('Formato inválido. Subí una imagen JPG, PNG o WebP.')
+      error.status = 415
+      return callback(error)
+    }
+    return callback(null, true)
+  },
+});
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
-router.post('/process', upload.single('image'), async (req, res) => {
+router.post('/process', requireAuth, upload.single('image'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No se subió ninguna imagen' });
     }
 
     if (!GEMINI_API_KEY) {
-      return res.status(500).json({ error: 'Falta configurar GEMINI_API_KEY en el servidor' });
+      return res.status(503).json({ error: 'El procesamiento de imágenes no está configurado.' });
     }
 
     const base64Image = req.file.buffer.toString('base64');
@@ -99,9 +111,8 @@ router.post('/process', upload.single('image'), async (req, res) => {
 
   } catch (error) {
     console.error('❌ Error fatal en OCR con Gemini:', error);
-    res.status(500).json({ 
-      error: 'Error de servidores de IA. Por favor, reintenta en un minuto.',
-      details: error.message 
+    res.status(500).json({
+      error: 'No se pudo procesar la imagen. Intentá nuevamente en unos minutos.',
     });
   }
 });

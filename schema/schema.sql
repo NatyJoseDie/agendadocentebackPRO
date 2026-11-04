@@ -1,6 +1,7 @@
 -- ============================================================
 --  AGENDA DOCENTE — Esquema de Base de Datos
 --  Ejecutar en: Supabase Dashboard > SQL Editor
+--  Después, ejecutar schema/migrations/20261104_subscription_write_protection.sql
 -- ============================================================
 
 -- ─────────────────────────────────────────
@@ -16,7 +17,11 @@ CREATE TABLE IF NOT EXISTS docentes (
   escuela      TEXT,
   provincia    TEXT DEFAULT 'Buenos Aires',
   turno        TEXT CHECK (turno IN ('mañana', 'tarde', 'noche', 'completo')),
-  plan         TEXT DEFAULT 'gratuito' CHECK (plan IN ('gratuito', 'premium')),
+  plan         TEXT DEFAULT 'gratuito' CHECK (plan IN ('gratuito', 'pro', 'premium')),
+  subscription_plan TEXT DEFAULT 'free',
+  is_premium   BOOLEAN DEFAULT FALSE,
+  is_vip_beta  BOOLEAN DEFAULT FALSE,
+  trial_ends_at TIMESTAMPTZ,
   created_at   TIMESTAMPTZ DEFAULT NOW(),
   updated_at   TIMESTAMPTZ DEFAULT NOW()
 );
@@ -190,9 +195,9 @@ ALTER TABLE contactos ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "contactos_all_own" ON contactos FOR ALL USING (auth.uid() = docente_id);
 
 -- ─────────────────────────────────────────
--- 8. TABLA: eventos_calendario
+-- 8. TABLA: calendario
 -- ─────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS eventos_calendario (
+CREATE TABLE IF NOT EXISTS calendario (
   id          UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   docente_id  UUID REFERENCES docentes(id) ON DELETE CASCADE NOT NULL,
   titulo      TEXT NOT NULL,
@@ -205,8 +210,8 @@ CREATE TABLE IF NOT EXISTS eventos_calendario (
   created_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
-ALTER TABLE eventos_calendario ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "eventos_all_own" ON eventos_calendario FOR ALL USING (auth.uid() = docente_id);
+ALTER TABLE calendario ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "calendario_all_own" ON calendario FOR ALL USING (auth.uid() = docente_id);
 
 -- ─────────────────────────────────────────
 -- 9. TABLA: proyectos
@@ -291,3 +296,30 @@ CREATE TABLE IF NOT EXISTS pagos (
 ALTER TABLE pagos ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "docentes_ver_sus_pagos" ON pagos FOR SELECT USING (auth.uid() = docente_id);
 
+-- ─────────────────────────────────────────
+-- 13. TABLA: notificaciones_docente
+-- ─────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS notificaciones_docente (
+  id                       UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  docente_id               UUID REFERENCES docentes(id) ON DELETE CASCADE NOT NULL,
+  event_key                TEXT UNIQUE NOT NULL,
+  tipo                     TEXT NOT NULL,
+  titulo                   TEXT NOT NULL,
+  mensaje                  TEXT NOT NULL,
+  programada_para          TIMESTAMPTZ NOT NULL,
+  leida_at                 TIMESTAMPTZ,
+  email_estado             TEXT NOT NULL DEFAULT 'pendiente'
+                           CHECK (email_estado IN ('pendiente', 'enviando', 'fallida', 'enviada')),
+  email_intentos           INTEGER NOT NULL DEFAULT 0 CHECK (email_intentos >= 0),
+  email_ultimo_intento_at  TIMESTAMPTZ,
+  email_enviada_at         TIMESTAMPTZ,
+  email_error              TEXT,
+  created_at               TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE notificaciones_docente ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "notificaciones_select_own" ON notificaciones_docente
+  FOR SELECT USING (auth.uid() = docente_id);
+CREATE POLICY "notificaciones_update_read_own" ON notificaciones_docente
+  FOR UPDATE USING (auth.uid() = docente_id)
+  WITH CHECK (auth.uid() = docente_id);

@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '../config/supabase.js'
+import { procesarAvisosVip } from '../services/avisosVip.js'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CRON JOB: Vencimiento de suscripciones
@@ -33,8 +34,8 @@ export async function procesarVencimientos() {
     // El modo de solo lectura se determina desde trial_ends_at en requireWritable.
     const { data: docentes, error } = await supabaseAdmin
       .from('docentes')
-      .select('id, email, plan, subscription_plan, trial_ends_at')
-      .not('trial_ends_at', 'is', null)
+      .select('id, email, nombre, plan, subscription_plan, is_vip_beta, created_at, trial_ends_at')
+      .or('trial_ends_at.not.is.null,is_vip_beta.eq.true')
 
     if (error) {
       console.error('❌ [Cron Vencimientos] Error al consultar docentes:', error.message)
@@ -49,6 +50,10 @@ export async function procesarVencimientos() {
     let countSoloLectura = 0
     let countDegradados = 0
     let countOk = 0
+    const avisos = await procesarAvisosVip(
+      docentes.filter((docente) => !ADMIN_EMAILS.includes(docente.email?.toLowerCase())),
+      ahora,
+    )
 
     for (const docente of docentes) {
       // Nunca tocar a los admins/fundadora ni cuentas que no tengan plan pago.
@@ -103,6 +108,9 @@ export async function procesarVencimientos() {
       vigentes: countOk,
       pasadosASoloLectura: countSoloLectura,
       degradadosAGratuito: countDegradados,
+      notificacionesCreadas: avisos.creadas,
+      emailsEnviados: avisos.emailsEnviados,
+      erroresNotificaciones: avisos.errores,
     }
 
     console.log('✅ [Cron Vencimientos] Resumen:', resumen)

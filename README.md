@@ -45,10 +45,12 @@ Se configuró un trigger en Supabase que detecta los primeros 10 registros (excl
 
 **Flujo de vencimiento:**
 1. Al vencer los 4 meses: Cuenta pasa a modo Solo Lectura durante 30 días.
-2. Día 140: Aviso por mail/WhatsApp "quedan 10 días" (pendiente de implementar).
-3. Al finalizar los 30 días de gracia: La cuenta pasa al plan gratuito y conserva sus datos.
+2. Día 140: Aviso dentro de la agenda y por email si Resend está configurado.
+3. Al finalizar los 30 días de gracia: Aviso dentro de la agenda y por email si Resend está configurado; la cuenta pasa al plan gratuito y conserva sus datos.
 
 El backend inicia diariamente el proceso de vencimientos al arrancar. Las escrituras de cuentas con un plan pago vencido quedan bloqueadas durante la gracia.
+Los avisos se guardan de forma idempotente en `notificaciones_docente` y pueden
+consultarse desde `GET /api/notificaciones`. WhatsApp no se integra en esta etapa.
 
 #### 🗃️ Cambios en Base de Datos (Supabase)
 
@@ -114,19 +116,64 @@ src/
 
 ## ⚙️ Variables de Entorno (.env)
 
-`nv
+```env
 PORT=3000
+NODE_ENV=production
+CORS_ORIGIN=https://DOMINIO-PUBLICO-DEL-FRONTEND
 SUPABASE_URL=https://xxxx.supabase.co
 SUPABASE_ANON_KEY=xxxx
 SUPABASE_SERVICE_ROLE_KEY=xxxx
-MERCADO_PAGO_ACCESS_TOKEN=APP_USR-xxxx
-`
+MERCADO_PAGO_ACCESS_TOKEN=TEST-xxxx
+MERCADO_PAGO_WEBHOOK_SECRET=xxxx
+MERCADO_PAGO_ENVIRONMENT=sandbox
+FRONTEND_URL=https://DOMINIO-PUBLICO-DEL-FRONTEND
+BACKEND_PUBLIC_URL=https://DOMINIO-PUBLICO-DE-RENDER
+RESEND_API_KEY=re_xxxx
+RESEND_FROM_EMAIL=Agenda Docente <avisos@tu-dominio-verificado.com>
+```
 
 ---
 
+## 🔧 Configuración de producción y verificación
+
+Copiá `.env.example` a `.env` en desarrollo. En Render configurá los mismos valores
+desde **Environment**; nunca subas credenciales al repositorio.
+
+```env
+PORT=3000
+NODE_ENV=production
+CORS_ORIGIN=https://DOMINIO-PUBLICO-DEL-FRONTEND
+SUPABASE_URL=https://xxxx.supabase.co
+SUPABASE_ANON_KEY=xxxx
+SUPABASE_SERVICE_ROLE_KEY=xxxx
+MERCADO_PAGO_ACCESS_TOKEN=TEST-xxxx
+MERCADO_PAGO_WEBHOOK_SECRET=xxxx
+MERCADO_PAGO_ENVIRONMENT=sandbox
+FRONTEND_URL=https://DOMINIO-PUBLICO-DEL-FRONTEND
+BACKEND_PUBLIC_URL=https://DOMINIO-PUBLICO-DE-RENDER
+RESEND_API_KEY=re_xxxx
+RESEND_FROM_EMAIL=Agenda Docente <avisos@tu-dominio-verificado.com>
+```
+
+`CORS_ORIGIN` acepta varios dominios separados por coma. La URL pública del backend
+debe apuntar al mismo servicio de Render. En producción, usá dominios HTTPS y definí
+explícitamente `MERCADO_PAGO_ENVIRONMENT` (`sandbox` o `production`).
+
+- `npm test`: ejecuta las pruebas locales del backend.
+- `GET /api/health`: comprueba que el proceso responde.
+- `GET /api/health/ready`: comprueba Supabase, el esquema de notificaciones y la función transaccional de pagos.
+- En Mercado Pago, configurá la URL `https://DOMINIO-PUBLICO-DE-RENDER/api/pagos/webhook` y copiá el secreto de firma a `MERCADO_PAGO_WEBHOOK_SECRET`.
+- Para enviar email, verificá el dominio remitente en Resend y configurá `RESEND_API_KEY` y `RESEND_FROM_EMAIL` en Render. Las notificaciones dentro de la agenda siguen funcionando sin esas credenciales.
+- Ejecutá en Supabase SQL Editor [`schema/migrations/20261104_subscription_write_protection.sql`](./schema/migrations/20261104_subscription_write_protection.sql). La migración conserva la lectura durante la gracia, bloquea las escrituras directas, protege los planes y crea la tabla y función transaccional de notificaciones/pagos.
+- Revisá [`INSTRUCCIONES_FRONTEND.md`](./INSTRUCCIONES_FRONTEND.md) antes de ajustar o volver a desplegar el frontend.
+
 ## 📌 Pendientes / Próximos Pasos
 
-- [ ] Probar webhook de MP apuntando a la URL de Render en producción.
-- [ ] Implementar envío de email/WhatsApp automático al día 120, 140 y 150 del VIP.
-- [ ] Probar el ciclo de vencimiento completo con cuentas de prueba en producción.
-- [ ] Invitar a los 10 docentes beta pioneros.
+- [ ] Aplicar en Supabase la migración de protección de escrituras directas y verificar sus políticas.
+- [ ] Configurar y probar en Render las variables de entorno con credenciales de prueba.
+- [ ] Confirmar que `/api/health/ready` responde antes de conectar el frontend.
+- [ ] Configurar y probar notificaciones firmadas de Mercado Pago en modo sandbox.
+- [ ] Verificar el remitente de Resend y probar los emails VIP junto con las alertas dentro de la agenda.
+- [ ] Implementar en el frontend el centro/indicador de notificaciones usando los endpoints documentados.
+- [ ] Probar el ciclo de vencimiento completo con cuentas de prueba antes de invitar docentes.
+- [ ] No habilitar pagos reales ni invitar docentes hasta completar las verificaciones anteriores.

@@ -4,11 +4,21 @@ import { supabaseAdmin } from '../config/supabase.js'
 
 const router = Router()
 
-const ADMIN_EMAILS = [
+const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || [
   'nbarzotti6@gmail.com',
   'natalia@agendadocente.com',
   'admin@agendadocente.com',
-]
+].join(','))
+  .split(',')
+  .map((email) => email.trim().toLowerCase())
+  .filter(Boolean)
+
+const PLANES_VALIDOS = new Map([
+  ['gratuito', 'gratuito'],
+  ['free', 'gratuito'],
+  ['pro', 'pro'],
+  ['premium', 'premium'],
+])
 
 // Middleware de seguridad estricto para dueña / admin
 const requireAdmin = (req, res, next) => {
@@ -28,25 +38,21 @@ router.get('/metricas', requireAuth, requireAdmin, async (req, res) => {
     // 1. Obtener todos los docentes
     const { data: docentes, error: errDocentes } = await supabaseAdmin
       .from('docentes')
-      .select('*')
+      .select('id, email, nombre, apellido, avatar_url, plan, subscription_plan, is_premium, trial_ends_at, created_at')
       .order('created_at', { ascending: false })
 
     if (errDocentes) throw errDocentes
 
     // 2. Obtener todos los pagos
-    let pagos = []
-    try {
-      const { data: pagosData } = await supabaseAdmin
-        .from('pagos')
-        .select('*')
-        .order('fecha_pago', { ascending: false })
-      pagos = pagosData || []
-    } catch (_) {
-      // Ignorar si la tabla pagos aún está vacía
-    }
+    const { data: pagos, error: errPagos } = await supabaseAdmin
+      .from('pagos')
+      .select('id, docente_id, mp_payment_id, monto, moneda, estado, metodo_pago, plan, fecha_pago, expira_at')
+      .order('fecha_pago', { ascending: false })
+
+    if (errPagos) throw errPagos
 
     // 3. Calcular ingresos totales aprobados
-    const pagosAprobados = pagos.filter(p => p.estado === 'approved')
+    const pagosAprobados = (pagos || []).filter(p => p.estado === 'approved')
     const totalRecaudado = pagosAprobados.reduce((acc, p) => acc + Number(p.monto || 0), 0)
 
     // 4. Calcular desglose de docentes
@@ -118,7 +124,7 @@ router.get('/metricas', requireAuth, requireAdmin, async (req, res) => {
     })
   } catch (err) {
     console.error('❌ Error al obtener métricas de admin:', err)
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'No se pudieron obtener las métricas.' })
   }
 })
 
@@ -128,7 +134,7 @@ router.get('/metricas', requireAuth, requireAdmin, async (req, res) => {
  */
 router.post('/modificar-docente', requireAuth, requireAdmin, async (req, res) => {
   try {
-    const { docente_id, nuevo_plan, dias_extra } = req.body
+    const { docente_id, nuevo_plan, dias_extra } = req.body || {}
 
     if (!docente_id) {
       return res.status(400).json({ error: 'Falta docente_id' })
@@ -136,15 +142,44 @@ router.post('/modificar-docente', requireAuth, requireAdmin, async (req, res) =>
 
     const updateFields = { updated_at: new Date().toISOString() }
 
-    if (nuevo_plan) {
-      updateFields.plan = nuevo_plan
-      updateFields.subscription_plan = nuevo_plan
-      updateFields.is_premium = nuevo_plan !== 'gratuito' && nuevo_plan !== 'free'
+    if (nuevo_plan !== undefined && nuevo_plan !== null) {
+      if (typeof nuevo_plan !== 'string' || !PLANES_VALIDOS.has(nuevo_plan.toLowerCase())) {
+        return res.status(400).json({ error: 'nuevo_plan debe ser gratuito, free, pro o premium.' })
+      }
+
+      const plan = PLANES_VALIDOS.get(nuevo_plan.toLowerCase())
+      updateFields.plan = plan
+      updateFields.subscription_plan = plan === 'gratuito' ? 'free' : plan
+      updateFields.is_premium = plan === 'pro' || plan === 'premium'
+      updateFields.is_vip_beta = false
+      if (plan === 'gratuito') updateFields.trial_ends_at = null
     }
 
-    if (dias_extra) {
-      const nuevaFecha = new Date(Date.now() + Number(dias_extra) * 24 * 60 * 60 * 1000).toISOString()
-      updateFields.trial_ends_at = nuevaFecha
+    if (dias_extra !== undefined && dias_extra !== null) {
+      const dias = Number(dias_extra)
+      if (!Number.isInteger(dias) || dias < 1 || dias > 3650) {
+        return res.status(400).json({ error: 'dias_extra debe ser un entero entre 1 y 3650.' })
+      }
+
+      const { data: docente, error: docenteError } = await supabaseAdmin
+        .from('docentes')
+        .select('trial_ends_at')
+        .eq('id', docente_id)
+        .maybeSingle()
+
+      if (docenteError) throw docenteError
+      if (!docente) return res.status(404).json({ error: 'Docente no encontrado.' })
+
+      const fechaActual = docente.trial_ends_at ? new Date(docente.trial_ends_at).getTime() : 0
+      const fechaBase = Math.max(Date.now(), Number.isFinite(fechaActual) ? fechaActual : 0)
+      updateFields.trial_ends_at = new Date(fechaBase + dias * 24 * 60 * 60 * 1000).toISOString()
+    }
+
+    if (
+      (nuevo_plan === undefined || nuevo_plan === null) &&
+      (dias_extra === undefined || dias_extra === null)
+    ) {
+      return res.status(400).json({ error: 'Indicá nuevo_plan o dias_extra.' })
     }
 
     const { data, error } = await supabaseAdmin
@@ -154,11 +189,13 @@ router.post('/modificar-docente', requireAuth, requireAdmin, async (req, res) =>
       .select()
       .single()
 
+    if (error?.code === 'PGRST116') return res.status(404).json({ error: 'Docente no encontrado.' })
     if (error) throw error
 
     res.json({ success: true, docente: data })
   } catch (err) {
-    res.status(500).json({ error: err.message })
+    console.error('❌ Error al modificar docente desde admin:', err)
+    res.status(500).json({ error: 'No se pudo modificar el docente.' })
   }
 })
 

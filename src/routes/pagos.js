@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { requireAuth } from '../middleware/auth.js'
 import { mpPreference, mpPayment } from '../config/mercadopago.js'
 import { supabaseAdmin, supabaseForUser } from '../config/supabase.js'
+import { verifyMercadoPagoSignature } from '../utils/mercadopagoWebhook.js'
 
 const router = Router()
 
@@ -47,7 +48,7 @@ router.post('/crear-preferencia', (req, _res, next) => {
   next()
 }, requireAuth, async (req, res) => {
   try {
-    const { plan = 'pro', ciclo = 'anual' } = req.body
+    const { plan = 'pro', ciclo = 'anual' } = req.body || {}
 
     const configKey = `${plan}_${ciclo}`
     const planSeleccionado = PLANES_CONFIG[configKey]
@@ -59,13 +60,26 @@ router.post('/crear-preferencia', (req, _res, next) => {
     }
 
     if (!process.env.MERCADO_PAGO_ACCESS_TOKEN) {
-      return res.status(500).json({
-        error: 'El servidor no tiene configurado MERCADO_PAGO_ACCESS_TOKEN en las variables de entorno.',
+      return res.status(503).json({
+        error: 'Pagos no disponibles: falta configurar las credenciales de Mercado Pago.',
       })
     }
 
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
-    const backendUrl = process.env.BACKEND_PUBLIC_URL || 'http://localhost:3000'
+    const frontendUrl = process.env.FRONTEND_URL?.replace(/\/+$/, '')
+    const backendUrl = process.env.BACKEND_PUBLIC_URL?.replace(/\/+$/, '')
+    const environment = process.env.MERCADO_PAGO_ENVIRONMENT
+
+    if (!frontendUrl || !backendUrl || !['sandbox', 'production'].includes(environment)) {
+      return res.status(503).json({
+        error: 'Pagos no disponibles: configurá FRONTEND_URL, BACKEND_PUBLIC_URL y MERCADO_PAGO_ENVIRONMENT.',
+      })
+    }
+
+    if (process.env.NODE_ENV === 'production' && (
+      !frontendUrl.startsWith('https://') || !backendUrl.startsWith('https://')
+    )) {
+      return res.status(503).json({ error: 'Las URL públicas de pagos deben usar HTTPS en producción.' })
+    }
 
     const preferenceData = {
       items: [
@@ -99,18 +113,27 @@ router.post('/crear-preferencia', (req, _res, next) => {
     }
 
     const response = await mpPreference.create({ body: preferenceData })
+    const checkoutUrl = environment === 'sandbox'
+      ? response.sandbox_init_point
+      : response.init_point
+
+    if (!checkoutUrl) {
+      console.error(`Mercado Pago no devolvió una URL de checkout para el entorno ${environment}.`)
+      return res.status(502).json({ error: 'Mercado Pago no generó el enlace de pago.' })
+    }
 
     res.json({
       id: response.id,
-      init_point: response.init_point, // Link de producción
-      sandbox_init_point: response.sandbox_init_point, // Link para pruebas
+      init_point: checkoutUrl,
+      checkout_url: checkoutUrl,
+      sandbox_init_point: response.sandbox_init_point,
       plan: planSeleccionado.planKey,
       ciclo: planSeleccionado.ciclo,
       precio: planSeleccionado.price,
     })
   } catch (err) {
     console.error('❌ Error al crear preferencia de Mercado Pago:', err)
-    res.status(500).json({ error: err.message || 'Error al comunicarse con Mercado Pago' })
+    res.status(502).json({ error: 'No se pudo iniciar el pago. Intentá nuevamente.' })
   }
 })
 
@@ -121,73 +144,98 @@ router.post('/crear-preferencia', (req, _res, next) => {
 router.post('/webhook', async (req, res) => {
   try {
     const { query, body } = req
-    const topic = query.topic || query.type || body.type
+    const topic = query.topic || query.type || body?.type
+    const action = body?.action
+    const isPaymentNotification =
+      topic === 'payment' ||
+      action === 'payment.created' ||
+      action === 'payment.updated'
 
-    if (topic === 'payment' || body.action === 'payment.created' || body.action === 'payment.updated') {
-      const paymentId = query.id || query['data.id'] || body.data?.id
+    if (isPaymentNotification) {
+      const paymentId = body?.data?.id || query['data.id'] || query.id
+      const requestId = req.get('x-request-id')
+      const signature = req.get('x-signature')
+      const webhookSecret = process.env.MERCADO_PAGO_WEBHOOK_SECRET
 
-      if (paymentId) {
-        console.log(`🔔 Webhook Mercado Pago: procesando pago ID: ${paymentId}`)
-        const paymentInfo = await mpPayment.get({ id: paymentId })
+      if (!webhookSecret) {
+        console.error('❌ MERCADO_PAGO_WEBHOOK_SECRET no está configurado.')
+        return res.status(503).send('Webhook no configurado')
+      }
 
-        if (paymentInfo && paymentInfo.status === 'approved') {
-          console.log(`✅ Pago ${paymentId} APROBADO por $${paymentInfo.transaction_amount}`)
+      if (!verifyMercadoPagoSignature({
+        secret: webhookSecret,
+        signature,
+        requestId,
+        dataId: paymentId,
+      })) {
+        console.warn('⚠️ Webhook de Mercado Pago rechazado: firma inválida.')
+        return res.status(401).send('Firma inválida')
+      }
 
-          let meta = {}
-          try {
-            meta = JSON.parse(paymentInfo.external_reference || '{}')
-          } catch (e) {
-            console.warn('No se pudo parsear external_reference:', paymentInfo.external_reference)
-          }
+      if (!paymentId) return res.status(400).send('Falta el ID del pago')
 
-          const { docente_id, plan = 'premium', diasVigencia = 365, ciclo = 'anual' } = meta
+      console.log(`🔔 Webhook Mercado Pago: procesando pago ID: ${paymentId}`)
+      const paymentInfo = await mpPayment.get({ id: paymentId })
 
-          if (docente_id) {
-            const expiraAt = new Date(Date.now() + Number(diasVigencia) * 24 * 60 * 60 * 1000).toISOString()
+      if (paymentInfo?.status === 'approved') {
+        let meta
 
-            // 1. Actualizar docente con rol premium / pro
-            const { error: updateError } = await supabaseAdmin
-              .from('docentes')
-              .update({
-                plan: plan,
-                subscription_plan: plan,
-                is_premium: true,
-                trial_ends_at: expiraAt,
-                updated_at: new Date().toISOString(),
-              })
-              .eq('id', docente_id)
-
-            if (updateError) {
-              console.error('Error al actualizar plan en docentes:', updateError.message)
-            } else {
-              console.log(`🎉 Plan ${plan} (${ciclo}) activado con éxito para el docente ${docente_id}. Vigencia hasta: ${expiraAt}`)
-            }
-
-            // 2. Registrar el pago en la tabla pagos (si existe)
-            try {
-              await supabaseAdmin.from('pagos').insert({
-                docente_id,
-                mp_payment_id: String(paymentId),
-                monto: paymentInfo.transaction_amount,
-                moneda: paymentInfo.currency_id || 'ARS',
-                estado: paymentInfo.status,
-                metodo_pago: paymentInfo.payment_method_id,
-                plan: `${plan}_${ciclo}`,
-                fecha_pago: paymentInfo.date_approved || new Date().toISOString(),
-                expira_at: expiraAt,
-              })
-            } catch (pagoErr) {
-              console.warn('Aviso: no se pudo guardar en tabla pagos:', pagoErr.message)
-            }
-          }
+        try {
+          meta = JSON.parse(paymentInfo.external_reference || '')
+        } catch {
+          console.error(`❌ El pago ${paymentId} tiene una referencia externa inválida.`)
+          return res.status(200).send('Referencia inválida')
         }
+
+        const { docente_id, plan, ciclo, diasVigencia } = meta || {}
+        const config = PLANES_CONFIG[`${plan}_${ciclo}`]
+
+        if (
+          typeof docente_id !== 'string' ||
+          !/^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i.test(docente_id) ||
+          !config ||
+          Number(diasVigencia) !== config.diasVigencia ||
+          Number(paymentInfo.transaction_amount) !== config.price ||
+          paymentInfo.currency_id !== 'ARS'
+        ) {
+          console.error(`❌ El pago ${paymentId} no coincide con un plan, precio o moneda válidos.`)
+          return res.status(200).send('Pago no válido')
+        }
+
+        const fechaPago = paymentInfo.date_approved || paymentInfo.date_created || new Date().toISOString()
+        if (Number.isNaN(new Date(fechaPago).getTime())) {
+          throw new Error(`El pago ${paymentId} tiene una fecha de aprobación inválida.`)
+        }
+
+        const { data: expiraAt, error: activacionError } = await supabaseAdmin.rpc(
+          'activar_pago_suscripcion',
+          {
+            p_docente_id: docente_id,
+            p_payment_id: String(paymentId),
+            p_monto: Number(paymentInfo.transaction_amount),
+            p_moneda: paymentInfo.currency_id,
+            p_estado: paymentInfo.status,
+            p_metodo_pago: paymentInfo.payment_method_id || null,
+            p_plan: plan,
+            p_ciclo: ciclo,
+            p_fecha_pago: fechaPago,
+            p_dias: config.diasVigencia,
+          },
+        )
+
+        if (activacionError?.code === 'P0002') {
+          console.error(`❌ El pago ${paymentId} corresponde a un docente inexistente.`)
+          return res.status(200).send('Docente inexistente')
+        }
+        if (activacionError) throw activacionError
+        console.log(`✅ Plan ${plan} (${ciclo}) activado para ${docente_id} hasta ${expiraAt}.`)
       }
     }
 
     res.status(200).send('OK')
   } catch (err) {
     console.error('❌ Error en webhook Mercado Pago:', err)
-    res.status(200).send('ERROR_LOGGED')
+    res.status(500).send('No se pudo procesar la notificación')
   }
 })
 
@@ -206,26 +254,19 @@ router.get('/estado', requireAuth, async (req, res) => {
 
     if (error) return res.status(500).json({ error: error.message })
 
-    let ultimoPago = null
-    try {
-      const { data: pagos } = await db
-        .from('pagos')
-        .select('*')
-        .eq('docente_id', req.user.id)
-        .order('fecha_pago', { ascending: false })
-        .limit(1)
+    const { data: pagos, error: pagosError } = await db
+      .from('pagos')
+      .select('mp_payment_id, monto, moneda, estado, plan, fecha_pago, expira_at')
+      .eq('docente_id', req.user.id)
+      .order('fecha_pago', { ascending: false })
+      .limit(1)
 
-      if (pagos && pagos.length > 0) {
-        ultimoPago = pagos[0]
-      }
-    } catch (_) {
-      // Ignorar si la tabla pagos aún no está creada
-    }
+    if (pagosError) return res.status(500).json({ error: pagosError.message })
 
     res.json({
       plan: docente?.plan || 'gratuito',
       is_premium: docente?.plan === 'pro' || docente?.plan === 'premium',
-      ultimoPago,
+      ultimoPago: pagos?.[0] || null,
     })
   } catch (err) {
     res.status(500).json({ error: err.message })

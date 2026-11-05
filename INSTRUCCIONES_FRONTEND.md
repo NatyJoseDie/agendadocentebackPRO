@@ -1,193 +1,311 @@
-# Indicaciones para conectar el frontend
+# Contrato del backend para el frontend
 
-Este archivo acompaña el trabajo del backend. Los cambios de frontend se harán en su
-carpeta y repositorio por separado; esta guía no los aplica automáticamente.
+Esta guía documenta los nombres y contratos que están implementados en el backend.
+El trabajo del frontend se realiza en su propio repositorio; no implica que esas
+funciones ya estén conectadas en el frontend.
 
-## 1. URL del backend
+## 1. URL de producción y configuración
 
-En el frontend, reemplazar la URL fija `http://localhost:3000/api` por la variable
-de Vite `VITE_API_URL`, conservando ese valor como alternativa para desarrollo local:
+La URL pública confirmada del backend en Render es:
 
 ```env
-# Desarrollo local
+VITE_API_URL=https://agendadocentebackpro.onrender.com/api
+```
+
+En Vercel, cargar `VITE_API_URL` en **Settings > Environment Variables** para los
+entornos necesarios y volver a desplegar. La variable termina en `/api`: no agregar
+otro `/api` al construir rutas.
+
+Para desarrollo local:
+
+```env
 VITE_API_URL=http://localhost:3000/api
 ```
 
-En Vercel, cargar `VITE_API_URL` con la URL pública HTTPS del servicio Render y el
-sufijo `/api` (por ejemplo, `https://<servicio>.onrender.com/api`). Luego reconstruir
-y desplegar el frontend. La URL concreta debe copiarse del servicio real de Render;
-no adivinarla ni dejar `localhost` en producción.
+Render debe tener `CORS_ORIGIN` igual al origen exacto del frontend en Vercel, sin
+`/api` ni barra final. Copiar el dominio real desde Vercel; no usar el ejemplo
+literalmente. Varios orígenes se separan por comas. El `index.html` del frontend
+local contiene `https://agendadocientepro.vercel.app` en metadatos Open Graph, pero
+eso no confirma que sea el dominio desplegado; verificar la URL activa en Vercel
+antes de cargar `CORS_ORIGIN`.
 
-Configurar también en Render `CORS_ORIGIN` con el dominio exacto de Vercel. Si se
-usan varios dominios (producción y preview), separarlos con comas.
+Comprobaciones del backend:
 
-## 2. Autenticación
+- `GET https://agendadocentebackpro.onrender.com/api/health` devuelve `status: "ok"`.
+- `GET https://agendadocentebackpro.onrender.com/api/health/ready` devuelve
+  `status: "ready"` si Supabase, pagos y notificaciones están disponibles.
 
-Las rutas de pagos, administración y OCR requieren una sesión vigente de Supabase.
-Enviar el token del usuario en el encabezado:
+El plan Free de Render puede tardar en responder cuando el servicio despierta.
 
-```http
-Authorization: Bearer <session.access_token>
+## 2. Autenticación y errores comunes
+
+Todas las rutas de negocio requieren una sesión vigente de Supabase, excepto health y
+el webhook de Mercado Pago. Para las rutas del backend, enviar el `access_token` de
+la sesión actual:
+
+```js
+const apiHeaders = {
+  Authorization: `Bearer ${session.access_token}`,
+}
+
+const response = await fetch(`${import.meta.env.VITE_API_URL}/notificaciones?limite=20`, {
+  headers: apiHeaders,
+})
 ```
 
-No enviar `SUPABASE_SERVICE_ROLE_KEY`, el token de Mercado Pago ni el secreto del
-webhook desde el navegador.
+No enviar refresh tokens. Nunca poner `SUPABASE_SERVICE_ROLE_KEY`, claves privadas
+VAPID, credenciales Mercado Pago, `RESEND_API_KEY` ni el secreto del webhook en el
+frontend o en variables `VITE_*`.
 
-## 3. Pagos
+- `401`: falta un `access_token` válido; actualizar la sesión o solicitar que inicie
+  sesión nuevamente.
+- `423` con `code: "READ_ONLY_GRACE_PERIOD"`: la cuenta está en el período de solo
+  lectura; permitir consultas y mostrar el aviso de renovación.
+- `404` en la URL raíz `/api` es normal: no hay una página de inicio de API.
 
-- `POST /api/pagos/crear-preferencia` recibe `{ "plan": "pro" | "premium", "ciclo": "mensual" | "anual" }`.
-- Resuelve el pago con `data.init_point` (o `data.checkout_url`). El backend devuelve
-  en esa propiedad el checkout correcto para `MERCADO_PAGO_ENVIRONMENT`.
-- En modo `sandbox`, usar credenciales y cuentas de prueba de Mercado Pago. No probar
-  con dinero real hasta completar la validación del webhook y recibir autorización.
-- El backend recibe la notificación en `/api/pagos/webhook`; no llamar ese endpoint
-  desde el frontend ni considerar la URL de retorno de checkout como confirmación de
-  pago.
-- Al volver del checkout, consultar `GET /api/pagos/estado` y refrescar el perfil.
-  La activación efectiva la confirma el webhook firmado, no el parámetro `status` de
-  la URL del navegador.
+## 3. Datos de agenda: Supabase directo y rutas del backend
 
-## 4. OCR
+El frontend existente realiza operaciones CRUD directamente contra Supabase. Para
+esas operaciones usar el cliente del frontend con `SUPABASE_URL`, la clave publicable
+(anon) y la sesión del usuario; nunca usar la clave `service_role`.
 
-`POST /api/ocr/process` requiere autenticación y recibe `multipart/form-data` con el
-campo `image`. Enviar `Authorization: Bearer ...`, sin definir manualmente el
-`Content-Type` para que el navegador agregue el boundary. Se aceptan imágenes JPG,
-PNG o WebP de hasta 10 MB.
+Los nombres que lee `src/supabaseClient.js` en el frontend son
+`VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY`. Son distintos de los nombres sin
+prefijo `VITE_` que usa el backend en Render. En el frontend se puede usar la clave
+anon/publicable de Supabase, pero nunca `SUPABASE_SERVICE_ROLE_KEY`.
 
-## 5. Panel de administración
+La migración `schema/migrations/20261104_subscription_write_protection.sql` ya se
+aplicó en el proyecto de producción. No volver a ejecutarla para conectar el frontend.
+Mantiene la lectura durante la gracia y bloquea escrituras directas mediante RLS.
 
-Usar las rutas existentes con el token del usuario:
+El backend también expone estos prefijos de ruta bajo `VITE_API_URL`; usarlos solo
+cuando el frontend consuma la API en vez de Supabase directamente:
+
+| Ruta | Uso |
+|---|---|
+| `/docentes/me` | Consultar, crear o actualizar el perfil propio |
+| `/escuelas`, `/cursos`, `/alumnos` | CRUD de escuelas, cursos y alumnos |
+| `/asistencias` | Asistencias y estadísticas |
+| `/calificaciones`, `/planificaciones`, `/proyectos` | Datos pedagógicos |
+| `/calendario` | Eventos de calendario del docente |
+| `/horarios`, `/salidas`, `/contactos`, `/licencias`, `/libro-temas` | Funciones de agenda |
+| `/necesidades` | Condiciones especiales de alumnos |
+| `/notificaciones` | Avisos dentro de la aplicación |
+| `/pagos` | Checkout y estado de suscripción |
+| `/admin` | Administración; además restringida por `ADMIN_EMAILS` |
+| `/ocr/process` | Procesamiento autenticado de imágenes |
+
+Usar los nombres tal como aparecen: `/horarios` (no `/horarios_curso`),
+`/calendario` (tabla `calendario`) y `/necesidades` (tabla
+`condiciones_especiales`). La vista `v_calendario_maestro` no es una ruta del backend
+ni una tabla editable. Las tablas fuente de eventos editables tienen sus propias
+políticas RLS.
+
+**Diferencia importante para el calendario actual:** el frontend local lee
+`v_calendario_maestro` y crea eventos en las tablas `eventos_academicos` y `salidas`
+directamente en Supabase. Los comentarios del frontend que dicen `POST /api/eventos`
+no corresponden a una ruta existente del backend. Aunque sí existe `POST /api/salidas`,
+esa ruta opera sobre `salidas_educativas`, no sobre la tabla `salidas` del calendario.
+No conectar esos comentarios a la API sin acordar primero el contrato y el modelo de
+datos; por ahora, las operaciones actuales deben seguir usando Supabase directo y RLS.
+
+## 4. Pagos con Mercado Pago
+
+`POST /api/pagos/crear-preferencia` requiere autenticación y JSON:
+
+```json
+{ "plan": "pro", "ciclo": "mensual" }
+```
+
+- `plan`: `pro` o `premium`.
+- `ciclo`: `mensual` o `anual`.
+- La respuesta exitosa contiene `id`, `init_point`, `checkout_url`,
+  `sandbox_init_point`, `plan`, `ciclo` y `precio`. Redirigir al checkout indicado por
+  `init_point` (o `checkout_url`); el backend elige la URL según su entorno.
+
+Mercado Pago regresa al frontend en `/suscripcion` con `status=success`, `failure` o
+`pending`. Son parámetros informativos del regreso, no prueba de pago. Al volver,
+consultar `GET /api/pagos/estado` y refrescar el perfil. La confirmación real la
+realiza el webhook firmado.
+
+`POST /api/pagos/webhook` lo invoca Mercado Pago; no llamarlo desde el frontend. Para
+pruebas, usar las credenciales y cuentas sandbox. No habilitar pagos reales hasta
+validar el flujo y recibir autorización.
+
+`GET /api/pagos/estado` devuelve:
+
+```json
+{
+  "plan": "gratuito",
+  "is_premium": false,
+  "ultimoPago": null
+}
+```
+
+`ultimoPago` puede ser un objeto con `mp_payment_id`, `monto`, `moneda`, `estado`,
+`plan`, `fecha_pago` y `expira_at`, o `null` si todavía no hay pagos.
+
+## 5. OCR
+
+`POST /api/ocr/process` requiere autenticación y `multipart/form-data` con el campo
+`image`. Adjuntar la imagen a `FormData`, obtener el `access_token` de la sesión de
+Supabase y enviar el encabezado Bearer de la sección 2; no establecer `Content-Type`
+manualmente, para que el navegador agregue el boundary. **La implementación OCR
+actual en `src/services/api.js` del frontend todavía no envía ese token y usa una
+URL fija de localhost; hay que corregir ambas cosas para producción.** Se aceptan JPG,
+PNG y WebP de hasta 10 MB.
+
+Respuesta exitosa:
+
+```json
+{ "alumnos": [{ "apellido": "PEREZ", "nombre": "ANA" }] }
+```
+
+Manejar `400` (no se adjuntó imagen), `401` (sesión), `413` (más de 10 MB), `415`
+(tipo no aceptado) y `503` (OCR no configurado).
+
+## 6. Panel de administración
+
+Ambas rutas requieren autenticación; además el backend compara el correo de la sesión
+con `ADMIN_EMAILS` configurado en Render:
 
 - `GET /api/admin/metricas`
-- `POST /api/admin/modificar-docente` con `docente_id` y `nuevo_plan` (`gratuito`,
-  `free`, `pro` o `premium`), `dias_extra` (entero de 1 a 3650), o ambos.
+- `POST /api/admin/modificar-docente` con `docente_id` y `nuevo_plan`
+  (`gratuito`, `free`, `pro` o `premium`), `dias_extra` (entero de 1 a 3650), o ambos.
 
-El backend verifica los correos autorizados mediante `ADMIN_EMAILS` en Render. Un
-usuario no autorizado debe recibir `403`; no habilitar controles administrativos
-solo con una comprobación del lado del cliente.
-
-## 6. Suscripciones y Supabase
-
-La aplicación realiza operaciones CRUD directamente contra Supabase. Antes de probar
-el modo de solo lectura, ejecutar en Supabase SQL Editor la migración
-[`schema/migrations/20261104_subscription_write_protection.sql`](./schema/migrations/20261104_subscription_write_protection.sql).
-Sin esa migración, las escrituras directas del navegador no pasan por el middleware
-del backend y el período de gracia no queda protegido.
-
-La migración mantiene la lectura durante la gracia, restringe escrituras y evita que
-un usuario cambie su propio plan. Verificar los casos de cuenta vigente, vencida
-dentro de la gracia y vencida hace más de 30 días.
+`nuevo_plan: "free"` se normaliza a `"gratuito"`. Un usuario que no sea administrador
+recibe `403`; ocultar controles en la interfaz no reemplaza esta validación del
+backend.
 
 ## 7. Centro de notificaciones (API existente)
 
-El backend ya expone estas rutas autenticadas. Todas las solicitudes deben usar
-`Authorization: Bearer <access_token_de_supabase>`:
+Las rutas de notificaciones requieren la sesión Bearer indicada en la sección 2.
 
-- `GET /api/notificaciones?limite=20` devuelve:
+`GET /api/notificaciones?limite=20` devuelve:
 
-  ```json
-  {
-    "notificaciones": [
-      {
-        "id": "uuid",
-        "tipo": "vip_trial_ended",
-        "titulo": "Tu período VIP terminó",
-        "mensaje": "…",
-        "programada_para": "2026-11-04T12:00:00.000Z",
-        "leida_at": null,
-        "created_at": "2026-11-04T12:00:00.000Z"
-      }
-    ],
-    "noLeidas": 1
-  }
-  ```
+```json
+{
+  "notificaciones": [
+    {
+      "id": "uuid",
+      "tipo": "vip_trial_ended",
+      "titulo": "Tu período VIP terminó",
+      "mensaje": "El período VIP terminó.",
+      "programada_para": "2026-11-04T12:00:00.000Z",
+      "leida_at": null,
+      "created_at": "2026-11-04T12:00:00.000Z"
+    }
+  ],
+  "noLeidas": 1
+}
+```
 
-- `limite` es opcional (por defecto 20; entero entre 1 y 50). El endpoint devuelve
-  primero las más recientes.
-- `PATCH /api/notificaciones/:id/leida` marca una notificación propia como leída y
-  devuelve `{ "notificacion": { "id": "uuid", "leida_at": "…" } }`. La acción sigue
-  permitida durante el período de solo lectura. Manejar `404` si no existe o no
-  pertenece al usuario y `401` si falta una sesión válida.
-- Cargar/actualizar el contador al iniciar sesión y al volver a la agenda; refrescarlo
-  después de marcar una notificación como leída. No consultar Supabase directamente
-  para leer ni modificar esta tabla: usar la API del backend.
-- Los avisos VIP se generan una sola vez para el fin del período VIP, 10 días antes
-  de terminar la gracia y al finalizarla. Si el job se atrasó, el backend crea solo
-  el aviso más reciente para no inundar la cuenta.
+`limite` es opcional, por defecto 20, y acepta enteros de 1 a 50. El listado se ordena
+por `created_at` descendente. `PATCH /api/notificaciones/:id/leida` marca como leída
+una notificación propia y devuelve
+`{"notificacion":{"id":"uuid","leida_at":"..."}}`. Devuelve `404` si no existe o no
+pertenece al usuario. Marcar como leída sigue permitido en solo lectura.
 
-## 8. PWA instalable y notificaciones push (trabajo coordinado, aún no implementado)
+Al iniciar sesión y volver a la agenda, consultar el listado y el contador `noLeidas`.
+Al marcar una notificación, actualizar el listado/contador con la respuesta o volver a
+consultar el endpoint. No leer ni actualizar la tabla `notificaciones_docente`
+directamente desde el frontend.
 
-La API actual **no tiene** servicio worker, suscripciones push, rutas de registro de
-dispositivo ni envío push. No intentar llamar endpoints push antes de que el backend
-los implemente y despliegue. Primero completar el centro de notificaciones de la
-sección anterior; luego coordinar esta integración entre repositorios.
+El backend genera avisos VIP una vez para el fin del período VIP, 10 días antes de
+terminar la gracia y al finalizarla. Si el job se atrasó, genera solo el aviso más
+reciente. Actualmente son notificaciones dentro de la aplicación; el centro visual de
+notificaciones debe implementarse en el frontend.
+
+## 8. PWA y notificaciones push (aún no implementadas)
+
+El backend actual no tiene rutas de suscripción de dispositivos ni servicio de envío
+push. No intentar llamar endpoints push hasta que se agreguen, documenten y desplieguen
+en el backend.
 
 ### Trabajo requerido en el frontend
 
-1. Preparar la agenda como PWA: `manifest.webmanifest` con nombre, nombre corto,
-   colores, `start_url`, `scope`, modo `standalone` e iconos apropiados; registrar un
-   service worker desde una ruta del mismo origen (por ejemplo `/sw.js`). Servir todo
-   por HTTPS en producción.
-2. Agregar una opción clara **“Activar notificaciones”**. Pedir permiso solo después
-   de que el usuario la elija, no al cargar la página. Comprobar soporte con
-   `('serviceWorker' in navigator)` y `('PushManager' in window)`; tratar permiso
-   denegado o navegador no compatible sin bloquear el uso de la agenda.
-3. Al aceptar, registrar el service worker, crear una suscripción usando la clave
-   pública VAPID que entregue el backend y enviar el objeto completo de
-   `PushSubscription` al endpoint de registro que se acuerde. No guardar claves
-   privadas en el frontend ni en variables `VITE_*`.
-4. Al cerrar sesión o desactivar las notificaciones, desuscribir el dispositivo y
-   avisar al endpoint de baja del backend acordado. Cada usuario puede tener varios
-   dispositivos; no borrar suscripciones de otros usuarios.
-5. En el service worker, manejar el evento `push` y mostrar el título y cuerpo
-   recibidos. Manejar `notificationclick` para abrir la agenda y navegar a la bandeja
-   de notificaciones; validar que cualquier URL recibida sea del origen de la app.
+1. El frontend ya tiene `public/manifest.json`, enlazado desde `index.html`, y
+   `public/sw.js`. Mantener esos nombres/ubicaciones o actualizar coherentemente las
+   referencias; no crear un segundo manifest con otra ruta. Revisar `start_url`,
+   `scope`, iconos y modo `standalone`. El registro del service worker en `src/main.jsx`
+   está comentado actualmente: activarlo solo después de revisar la estrategia de
+   caché y probarlo en HTTPS.
+2. Agregar una acción explícita **“Activar notificaciones”**. Pedir permiso solo
+   después de que la persona la elija. Comprobar soporte con
+   `('serviceWorker' in navigator)` y `('PushManager' in window)`; permiso denegado o
+   falta de soporte no debe impedir el uso de la agenda.
+3. Al aceptar, registrar el service worker y crear la suscripción con la clave pública
+   VAPID que entregue el backend. Enviar el objeto completo `PushSubscription` a la
+   futura ruta de registro. La clave privada VAPID solo debe existir como secreto en
+   Render, nunca en el frontend ni en `VITE_*`.
+4. Al cerrar sesión o desactivar push, desuscribir ese dispositivo y avisar a la
+   futura ruta de baja. Permitir varios dispositivos por usuario y no eliminar
+   suscripciones de otras cuentas.
+5. En el service worker, manejar `push` y `notificationclick`; al tocar el aviso,
+   abrir la agenda y navegar al centro de notificaciones. Validar que la URL destino
+   sea del mismo origen de la aplicación.
 6. No cachear respuestas autenticadas, datos de alumnos ni notificaciones en el
-   almacenamiento offline del service worker. Si se implementa modo offline, limitar
-   el caché a recursos estáticos públicos y definir una estrategia segura para
-   limpiarlo al cerrar sesión.
-7. En iPhone/iPad, explicar al usuario que debe agregar la web a la pantalla de
-   inicio y abrir la PWA instalada antes de activar push. Probar también el flujo de
-   instalación y permisos en Android y escritorio; no prometer push si el navegador
-   no lo soporta.
+   almacenamiento offline del service worker. Si se agrega modo offline, limitar el
+   caché a recursos estáticos públicos y definir cómo limpiarlo al cerrar sesión.
+7. El `public/sw.js` actual solo maneja caché; no implementa los eventos `push` ni
+   `notificationclick`. En iPhone/iPad, informar que la persona debe agregar la web a
+   la pantalla de inicio y abrir la PWA instalada antes de activar push. Probar
+   soporte y permisos en iOS, Android y escritorio; no prometer push si el navegador
+   no lo admite.
 
-### Contrato que debe acordarse con el backend antes de conectar push
+### Contrato pendiente del backend para push
 
-- Solicitar al backend las rutas exactas para registrar y eliminar una
-  `PushSubscription`; las rutas aún no existen. Deben exigir la sesión del usuario,
-  validar el endpoint y las claves recibidas, asociar el dispositivo al usuario
-  autenticado y permitir que solo ese usuario elimine su suscripción.
-- El backend debe guardar suscripciones de manera persistente y enviar un push cuando
-  cree una notificación VIP. La clave privada VAPID y el identificador de contacto
-  VAPID deben vivir exclusivamente como variables secretas en Render.
-- Al recibir un push, el frontend puede refrescar la bandeja con
-  `GET /api/notificaciones`; el payload push no debe ser la fuente de verdad ni
-  incluir datos personales sensibles. La lectura y el marcado como leído siguen
-  usando las rutas API existentes.
-- Acordar expiración, reintentos, borrado de suscripciones vencidas y respuestas de
-  error antes del despliegue. Probar con dos cuentas y varios dispositivos para
-  verificar que un usuario nunca reciba avisos de otro.
+- Definir las rutas exactas para registrar/eliminar una `PushSubscription`. Deben
+  autenticar al usuario, validar endpoint y claves, vincular el registro a
+  `req.user.id` (no confiar en un ID enviado por el cliente) y limitar bajas a los
+  dispositivos de esa cuenta.
+- Guardar las suscripciones de manera persistente y enviar un push cuando se cree una
+  notificación VIP. El payload no debe incluir datos personales sensibles; la bandeja
+  del backend continúa siendo la fuente de verdad.
+- Configurar clave privada, clave pública y contacto VAPID según el diseño acordado.
+  La clave privada y cualquier secreto deben guardarse solo en Render; la clave
+  pública podrá entregarse al frontend mediante el contrato acordado.
+- Definir caducidad, reintentos, borrado de suscripciones vencidas y respuestas de
+  error. Probar aislamiento con distintas cuentas y dispositivos.
 
-Los avisos dentro de la app no dependen de email ni de push. El backend tiene
-integración opcional con Resend: `RESEND_API_KEY` y `RESEND_FROM_EMAIL` se configuran
-solo en Render con un remitente verificado. `RESEND_REPLY_TO_EMAIL` puede apuntar al
-buzón de soporte.
+## 9. Email y publicación
 
-## 9. Comprobaciones antes de publicar
+El backend tiene integración opcional con Resend, pero el email no queda habilitado
+hasta configurar en Render `RESEND_API_KEY` y `RESEND_FROM_EMAIL` con un remitente
+permitido/verificado por el proveedor. `RESEND_REPLY_TO_EMAIL` es opcional y recibe
+las respuestas. No exponer esas variables en el frontend. Las notificaciones dentro
+de la app no dependen de email. Actualmente estas variables de Resend no están
+configuradas en producción; no presentar los emails como activos.
 
-1. Abrir `GET <URL-RENDER>/api/health` y comprobar `status: "ok"`.
-2. Abrir `GET <URL-RENDER>/api/health/ready` y comprobar `status: "ready"`.
-3. En el navegador publicado, comprobar que ninguna solicitud de API va a
-   `localhost` y que no hay errores de CORS.
-4. Probar registro/inicio de sesión y las funciones de agenda con una cuenta de
+### Cambios concretos de conexión pendientes en el frontend local
+
+- En `src/services/api.js`, reemplazar `const BACKEND_URL = 'http://localhost:3000/api'`
+  por `const BACKEND_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api'`.
+  Mantener las rutas relativas documentadas arriba, por ejemplo
+  `` `${BACKEND_URL}/pagos/estado` ``.
+- En `OCRAPI.processImage`, obtener la sesión de Supabase y enviar su `access_token`
+  como `Authorization: Bearer ...`; sin eso el backend responde `401`.
+- Las llamadas de pagos y administración del frontend ya envían un token cuando hay
+  sesión, pero deben usar `BACKEND_URL` configurable y verificar que no sea `null`.
+- En `src/main.jsx`, el registro del service worker está comentado. No hay push todavía;
+  primero implementar la bandeja dentro de la app con `/notificaciones`.
+
+Antes de publicar:
+
+1. Confirmar que `/api/health` y `/api/health/ready` responden correctamente.
+2. Revisar en la pestaña Network que las llamadas vayan a
+   `https://agendadocentebackpro.onrender.com/api` en producción, nunca a
+   `localhost`, y que no haya errores CORS.
+3. Probar inicio de sesión, carga de perfil y funciones de agenda con una cuenta de
    prueba.
-5. Probar creación de preferencia y webhook firmado con cuentas sandbox; verificar
-   que una notificación repetida no extienda nuevamente la suscripción.
-6. Confirmar que las escrituras quedan bloqueadas durante la gracia también en
-   Supabase directo, sin perder acceso de lectura.
-7. Para PWA/push, probar instalación, permisos, recepción con la app cerrada,
-   navegación al tocar el aviso, baja de suscripción y aislamiento entre cuentas en
-   Android, iOS/iPadOS y escritorio, solo después de desplegar también el backend push.
+4. Probar el centro de notificaciones: listado, contador, marcado como leído y
+   aislamiento entre cuentas.
+5. Probar checkout y webhook con cuentas sandbox; verificar que una notificación
+   repetida no extienda nuevamente la suscripción.
+6. Probar el período de solo lectura y confirmar que se mantiene la consulta de datos
+   pero se rechazan escrituras, tanto por la API como por Supabase directo.
+7. Probar instalación, permisos, recepción push con la app cerrada, navegación al
+   tocar el aviso y baja de suscripción solo después de desplegar también el backend
+   push.
 
-No se integrará WhatsApp en esta etapa. No se debe exponer ninguna credencial de
-Resend ni de otro proveedor en el frontend.
+WhatsApp no se integra en esta etapa.

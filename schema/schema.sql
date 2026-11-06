@@ -1,7 +1,8 @@
 -- ============================================================
 --  AGENDA DOCENTE — Esquema de Base de Datos
 --  Ejecutar en: Supabase Dashboard > SQL Editor
---  Después, ejecutar schema/migrations/20261104_subscription_write_protection.sql
+--  Después, ejecutar las migraciones 20261104_subscription_write_protection.sql
+--  20261105_standard_trial_14_days.sql y 20261106_free_plan_resource_selection.sql
 -- ============================================================
 
 -- ─────────────────────────────────────────
@@ -22,6 +23,10 @@ CREATE TABLE IF NOT EXISTS docentes (
   is_premium   BOOLEAN DEFAULT FALSE,
   is_vip_beta  BOOLEAN DEFAULT FALSE,
   trial_ends_at TIMESTAMPTZ,
+  free_plan_selection_required BOOLEAN NOT NULL DEFAULT FALSE,
+  free_plan_school_id UUID,
+  free_plan_course_ids UUID[] NOT NULL DEFAULT '{}',
+  free_plan_selection_locked_at TIMESTAMPTZ,
   created_at   TIMESTAMPTZ DEFAULT NOW(),
   updated_at   TIMESTAMPTZ DEFAULT NOW()
 );

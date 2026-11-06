@@ -76,7 +76,22 @@ anon/publicable de Supabase, pero nunca `SUPABASE_SERVICE_ROLE_KEY`.
 
 La migración `schema/migrations/20261104_subscription_write_protection.sql` ya se
 aplicó en el proyecto de producción. No volver a ejecutarla para conectar el frontend.
-Mantiene la lectura durante la gracia y bloquea escrituras directas mediante RLS.
+Para que las cuentas nuevas reciban automáticamente su prueba PRO, ejecutar también
+`schema/migrations/20261105_standard_trial_14_days.sql` en Supabase. Esta asigna
+14 días a perfiles nuevos no VIP ni administrativos; no modifica cuentas existentes.
+Al vencer, si no se activa un plan, se aplica solo lectura por 30 días y luego el
+plan gratuito, conservando los datos. El pase VIP de los primeros 10 docentes sigue
+siendo de 120 días.
+Ejecutar también `schema/migrations/20261106_free_plan_resource_selection.sql`.
+Si hay más de 1 escuela o 2 cursos activos al terminar la gracia, el frontend debe
+permitir elegir una escuela y hasta dos cursos. La selección queda fija mientras la
+cuenta siga en Free; los demás datos se conservan pero quedan bloqueados. Al activar
+un plan pago, Supabase restablece el acceso completo. La selección se activa al pasar
+de una suscripción PRO/Premium vencida a Free, no retroactivamente para cuentas Free
+preexistentes.
+`src/components/FreePlanSelectionGate.jsx` implementa este paso global después del
+inicio de sesión y usa las RPC `obtener_opciones_plan_gratuito` y
+`seleccionar_recursos_plan_gratuito`; no reemplazarlo por filtros solamente en la UI.
 
 El backend también expone estos prefijos de ruta bajo `VITE_API_URL`; usarlos solo
 cuando el frontend consuma la API en vez de Supabase directamente:
@@ -210,6 +225,17 @@ Al iniciar sesión y volver a la agenda, consultar el listado y el contador `noL
 Al marcar una notificación, actualizar el listado/contador con la respuesta o volver a
 consultar el endpoint. No leer ni actualizar la tabla `notificaciones_docente`
 directamente desde el frontend.
+
+### Interfaz requerida
+
+- Agregar una campanita visible en la navegación principal de la app autenticada.
+- Mostrar junto a la campana un badge con `noLeidas` cuando el valor sea mayor que 0;
+  ocultarlo cuando no haya notificaciones sin leer.
+- Al tocar la campana, abrir un panel o pantalla con el listado obtenido desde la API.
+- Al tocar una notificación no leída, marcarla con
+  `PATCH /api/notificaciones/:id/leida` y actualizar su estado visual y el badge.
+- Mostrar estados de carga, error y lista vacía. La campana informa avisos dentro de la
+  app cuando la docente la abre; no es una notificación push del sistema operativo.
 
 El backend genera avisos VIP una vez para el fin del período VIP, 10 días antes de
 terminar la gracia y al finalizarla. Si el job se atrasó, genera solo el aviso más

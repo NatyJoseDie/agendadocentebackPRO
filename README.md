@@ -16,6 +16,20 @@ API REST que sirve al frontend de Agenda Docente PRO. Gestiona autenticación (v
 
 ---
 
+### 📅 6 de Noviembre de 2026 — 09:57 (Argentina)
+
+#### ✅ Prueba de 14 días, límites del Plan Gratuito y notificaciones
+
+- Ejecutada en Supabase `20261105_standard_trial_14_days.sql`; la usuaria confirmó que el trigger `docentes_asignar_prueba_estandar` está activo.
+- Ejecutada en Supabase la migración `20261106_free_plan_resource_selection.sql`; Supabase respondió `Success`.
+- Verificada la tabla `docentes`: 1 perfil, 0 requieren selección de recursos y 0 selecciones confirmadas. No se afectaron cuentas adicionales.
+- Regla acordada para quienes terminan la gracia: si superan 1 escuela o 2 cursos, eligen qué conservar activo; la selección queda fija en el Plan Gratuito y los demás datos se conservan bloqueados. Contratar un plan restablece el acceso.
+- Preparado el flujo de selección en `agendaDoceteFRONT/src/components/FreePlanSelectionGate.jsx` y sus restricciones de acceso. Build del frontend exitoso; pruebas del backend exitosas (8/8).
+- Actualizada `INSTRUCCIONES_FRONTEND.md` para pedir una campanita con contador de notificaciones no leídas y un panel dentro de la app. El backend ya ofrece la API, pero la campana visual aún debe implementarse en el frontend. Push móvil sigue pendiente.
+- Los cambios de código están en los worktrees locales; no se confirmó commit ni despliegue de estos cambios.
+
+---
+
 ### 📅 4 de Noviembre de 2026 — 16:14 (Argentina)
 
 #### ✅ Migración, permisos de Supabase y verificación de producción
@@ -65,6 +79,25 @@ Se configuró un trigger en Supabase que detecta los primeros 10 registros (excl
 El backend inicia diariamente el proceso de vencimientos al arrancar. Las escrituras de cuentas con un plan pago vencido quedan bloqueadas durante la gracia.
 Los avisos se guardan de forma idempotente en `notificaciones_docente` y pueden
 consultarse desde `GET /api/notificaciones`. WhatsApp no se integra en esta etapa.
+
+#### 🎁 Prueba estándar para nuevas cuentas
+
+La migración `schema/migrations/20261105_standard_trial_14_days.sql` ya se ejecutó
+en Supabase. Su trigger asigna a cada perfil nuevo no VIP y no administrativo un
+plan PRO por 14 días. No modifica perfiles existentes ni altera el beneficio de
+120 días de los 10 docentes VIP.
+
+Si la persona no activa un plan al vencer la prueba, su cuenta queda en solo lectura
+durante 30 días y luego pasa al plan gratuito, conservando sus datos.
+La migración `schema/migrations/20261106_free_plan_resource_selection.sql` también
+se ejecutó en Supabase; verificación de perfiles realizada el 6 de noviembre de
+2026: ninguno requería selección en ese momento.
+Si al terminar la gracia hay más de 1 escuela o 2 cursos activos, la docente deberá
+elegir una escuela y hasta dos cursos; esa elección no se podrá cambiar mientras
+permanezca en el plan gratuito. Los demás datos se conservan y quedan bloqueados.
+La selección se solicita al pasar de una suscripción PRO/Premium vencida al plan
+gratuito; no se activa retroactivamente para cuentas gratuitas preexistentes.
+Al contratar un plan, se restablece el acceso completo.
 
 #### 🗃️ Cambios en Base de Datos (Supabase)
 

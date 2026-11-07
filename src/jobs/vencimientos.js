@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '../config/supabase.js'
 import { procesarAvisosVip } from '../services/avisosVip.js'
+import { procesarColaPush } from '../services/notificacionesPush.js'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CRON JOB: Vencimiento de suscripciones
@@ -111,6 +112,9 @@ export async function procesarVencimientos() {
       notificacionesCreadas: avisos.creadas,
       emailsEnviados: avisos.emailsEnviados,
       erroresNotificaciones: avisos.errores,
+      pushConfigurado: avisos.pushConfigurado,
+      pushesEnviados: avisos.pushesEnviados,
+      erroresPush: avisos.erroresPush,
     }
 
     console.log('✅ [Cron Vencimientos] Resumen:', resumen)
@@ -128,6 +132,7 @@ export async function procesarVencimientos() {
  */
 export function iniciarCronVencimientos() {
   const INTERVALO_MS = 24 * 60 * 60 * 1000 // 24 horas
+  const INTERVALO_PUSH_MS = 15 * 60 * 1000
 
   console.log('🕐 [Cron Vencimientos] Job registrado — se ejecuta al inicio y cada 24hs.')
 
@@ -139,4 +144,10 @@ export function iniciarCronVencimientos() {
     void procesarVencimientos()
   }, INTERVALO_MS)
   intervalo.unref?.()
+
+  void procesarColaPush()
+  const intervaloPush = setInterval(() => {
+    void procesarColaPush()
+  }, INTERVALO_PUSH_MS)
+  intervaloPush.unref?.()
 }

@@ -1,9 +1,12 @@
 import { Router } from 'express'
 import { requireAuth } from '../middleware/auth.js'
 import { supabaseForUser } from '../config/supabase.js'
+import notificacionesPushRouter from './notificacionesPush.js'
 
 const router = Router()
 const UUID_PATTERN = /^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i
+
+router.use('/push', notificacionesPushRouter)
 
 router.get('/', requireAuth, async (req, res) => {
   const limite = Number(req.query.limite ?? 20)

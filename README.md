@@ -16,6 +16,18 @@ API REST que sirve al frontend de Agenda Docente PRO. Gestiona autenticación (v
 
 ---
 
+### 📅 7 de Noviembre de 2026 — 14:01 (Argentina)
+
+#### 🔔 Contrato backend para notificaciones push
+
+- Agregadas rutas autenticadas para registrar y eliminar suscripciones por dispositivo; cada baja se limita a la cuenta verificada con Supabase Auth.
+- Agregado endpoint para entregar la clave pública VAPID y configuración opcional mediante variables de entorno exclusivas del backend.
+- Implementadas persistencia, cola durable, reintentos con espera creciente, limpieza de suscripciones vencidas y envío al crearse avisos VIP.
+- El payload push usa mensajes genéricos sin nombre ni datos personales; la bandeja dentro de la app sigue siendo la fuente de verdad.
+- Pendiente habilitar en producción: ejecutar una sola vez `schema/migrations/20261107_web_push_notifications.sql` en Supabase y configurar `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` y `VAPID_SUBJECT` en Render. Sin VAPID configurado, el endpoint de clave pública responde `503`; no conectar el frontend hasta aplicar también la migración.
+
+---
+
 ### 📅 6 de Noviembre de 2026 — 09:57 (Argentina)
 
 #### ✅ Prueba de 14 días, límites del Plan Gratuito y notificaciones

@@ -1,9 +1,15 @@
 import { supabaseAdmin } from '../config/supabase.js'
 import { crearAvisosVip, esDocenteVipBeta } from '../utils/avisosVip.js'
+import { procesarColaPush } from './notificacionesPush.js'
 
 const MAX_INTENTOS_EMAIL = 5
 const REINTENTO_EN_CURSO_MS = 15 * 60 * 1000
 const URL_RESEND = 'https://api.resend.com/emails'
+
+function faltaColumnaPushEstado(error) {
+  return ['42703', 'PGRST204'].includes(error.code)
+    && error.message?.includes('push_estado')
+}
 
 async function enviarEmailResend({ email, asunto, mensaje }) {
   const apiKey = process.env.RESEND_API_KEY
@@ -34,26 +40,44 @@ async function enviarEmailResend({ email, asunto, mensaje }) {
 }
 
 async function guardarAviso(docente, aviso, ahora) {
-  const { data: nuevoAviso, error: upsertError } = await supabaseAdmin
+  const valoresAviso = {
+    docente_id: docente.id,
+    event_key: aviso.event_key,
+    tipo: aviso.tipo,
+    titulo: aviso.titulo,
+    mensaje: aviso.mensaje,
+    programada_para: aviso.programada_para,
+  }
+  let pushDisponible = true
+  let resultadoUpsert = await supabaseAdmin
     .from('notificaciones_docente')
     .upsert({
-      docente_id: docente.id,
-      event_key: aviso.event_key,
-      tipo: aviso.tipo,
-      titulo: aviso.titulo,
-      mensaje: aviso.mensaje,
-      programada_para: aviso.programada_para,
+      ...valoresAviso,
+      push_estado: 'pendiente',
     }, { onConflict: 'event_key', ignoreDuplicates: true })
-    .select('id, email_estado, email_intentos, email_ultimo_intento_at')
+    .select('id, email_estado, email_intentos, email_ultimo_intento_at, push_estado, push_enqueued_at')
     .maybeSingle()
 
-  if (upsertError) throw upsertError
+  if (resultadoUpsert.error && faltaColumnaPushEstado(resultadoUpsert.error)) {
+    pushDisponible = false
+    console.warn('La migración Web Push aún no está aplicada; se guardará el aviso sin push.')
+    resultadoUpsert = await supabaseAdmin
+      .from('notificaciones_docente')
+      .upsert(valoresAviso, { onConflict: 'event_key', ignoreDuplicates: true })
+      .select('id, email_estado, email_intentos, email_ultimo_intento_at')
+      .maybeSingle()
+  }
 
+  if (resultadoUpsert.error) throw resultadoUpsert.error
+
+  const nuevoAviso = resultadoUpsert.data
   let notificacion = nuevoAviso
   if (!notificacion) {
     const { data, error } = await supabaseAdmin
       .from('notificaciones_docente')
-      .select('id, email_estado, email_intentos, email_ultimo_intento_at')
+      .select(pushDisponible
+        ? 'id, email_estado, email_intentos, email_ultimo_intento_at, push_estado, push_enqueued_at'
+        : 'id, email_estado, email_intentos, email_ultimo_intento_at')
       .eq('event_key', aviso.event_key)
       .single()
 
@@ -172,5 +196,13 @@ export async function procesarAvisosVip(docentes, ahora = new Date()) {
     }
   }
 
-  return { creadas, emailsEnviados, errores }
+  const push = await procesarColaPush(ahora)
+  return {
+    creadas,
+    emailsEnviados,
+    errores,
+    pushConfigurado: push.configurado,
+    pushesEnviados: push.enviadas,
+    erroresPush: push.fallidas,
+  }
 }

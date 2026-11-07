@@ -2,7 +2,8 @@
 --  AGENDA DOCENTE — Esquema de Base de Datos
 --  Ejecutar en: Supabase Dashboard > SQL Editor
 --  Después, ejecutar las migraciones 20261104_subscription_write_protection.sql
---  20261105_standard_trial_14_days.sql y 20261106_free_plan_resource_selection.sql
+--  20261105_standard_trial_14_days.sql, 20261106_free_plan_resource_selection.sql
+--  y 20261107_web_push_notifications.sql
 -- ============================================================
 
 -- ─────────────────────────────────────────
@@ -319,12 +320,61 @@ CREATE TABLE IF NOT EXISTS notificaciones_docente (
   email_ultimo_intento_at  TIMESTAMPTZ,
   email_enviada_at         TIMESTAMPTZ,
   email_error              TEXT,
-  created_at               TIMESTAMPTZ DEFAULT NOW()
+  push_estado              TEXT NOT NULL DEFAULT 'omitida' CHECK (push_estado IN (
+                             'pendiente', 'enviada', 'fallida',
+                             'sin_suscripciones', 'omitida'
+                           )),
+  push_enqueued_at         TIMESTAMPTZ,
+ created_at               TIMESTAMPTZ DEFAULT NOW()
 );
 
 ALTER TABLE notificaciones_docente ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON notificaciones_docente FROM PUBLIC, anon, authenticated;
+GRANT ALL ON notificaciones_docente TO service_role;
+GRANT SELECT ON notificaciones_docente TO authenticated;
+GRANT UPDATE (leida_at) ON notificaciones_docente TO authenticated;
 CREATE POLICY "notificaciones_select_own" ON notificaciones_docente
-  FOR SELECT USING (auth.uid() = docente_id);
+ FOR SELECT USING (auth.uid() = docente_id);
 CREATE POLICY "notificaciones_update_read_own" ON notificaciones_docente
-  FOR UPDATE USING (auth.uid() = docente_id)
-  WITH CHECK (auth.uid() = docente_id);
+ FOR UPDATE USING (auth.uid() = docente_id)
+ WITH CHECK (auth.uid() = docente_id);
+
+CREATE TABLE IF NOT EXISTS push_suscripciones (
+ id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+ docente_id UUID NOT NULL REFERENCES docentes(id) ON DELETE CASCADE,
+ endpoint TEXT NOT NULL UNIQUE
+   CHECK (endpoint LIKE 'https://%' AND octet_length(endpoint) <= 2048),
+ p256dh TEXT NOT NULL,
+ auth TEXT NOT NULL,
+ expiration_time TIMESTAMPTZ,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS push_suscripciones_docente_idx
+ ON push_suscripciones (docente_id);
+ALTER TABLE push_suscripciones ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON push_suscripciones FROM PUBLIC, anon, authenticated;
+GRANT ALL ON push_suscripciones TO service_role;
+
+CREATE TABLE IF NOT EXISTS notificaciones_push_envios (
+ id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+ notificacion_id UUID NOT NULL
+   REFERENCES notificaciones_docente(id) ON DELETE CASCADE,
+ suscripcion_id UUID
+   REFERENCES push_suscripciones(id) ON DELETE SET NULL,
+ estado TEXT NOT NULL DEFAULT 'pendiente'
+   CHECK (estado IN ('pendiente', 'enviando', 'fallida', 'enviada', 'expirada')),
+ intentos INTEGER NOT NULL DEFAULT 0 CHECK (intentos >= 0),
+ proximo_intento_at TIMESTAMPTZ DEFAULT NOW(),
+ ultimo_intento_at TIMESTAMPTZ,
+ enviada_at TIMESTAMPTZ,
+ error TEXT,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+ UNIQUE (notificacion_id, suscripcion_id)
+);
+CREATE INDEX IF NOT EXISTS notificaciones_push_envios_pendientes_idx
+ ON notificaciones_push_envios (proximo_intento_at)
+ WHERE estado IN ('pendiente', 'fallida');
+ALTER TABLE notificaciones_push_envios ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON notificaciones_push_envios FROM PUBLIC, anon, authenticated;
+GRANT ALL ON notificaciones_push_envios TO service_role;

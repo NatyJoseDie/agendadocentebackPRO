@@ -239,14 +239,11 @@ directamente desde el frontend.
 
 El backend genera avisos VIP una vez para el fin del período VIP, 10 días antes de
 terminar la gracia y al finalizarla. Si el job se atrasó, genera solo el aviso más
-reciente. Actualmente son notificaciones dentro de la aplicación; el centro visual de
-notificaciones debe implementarse en el frontend.
+reciente. Se guardan en la bandeja dentro de la app; el centro visual de notificaciones
+debe implementarse en el frontend. El envío push del sistema operativo es opcional y
+requiere completar la configuración de la sección 8.
 
-## 8. PWA y notificaciones push (aún no implementadas)
-
-El backend actual no tiene rutas de suscripción de dispositivos ni servicio de envío
-push. No intentar llamar endpoints push hasta que se agreguen, documenten y desplieguen
-en el backend.
+## 8. PWA y notificaciones push
 
 ### Trabajo requerido en el frontend
 
@@ -261,12 +258,12 @@ en el backend.
    `('serviceWorker' in navigator)` y `('PushManager' in window)`; permiso denegado o
    falta de soporte no debe impedir el uso de la agenda.
 3. Al aceptar, registrar el service worker y crear la suscripción con la clave pública
-   VAPID que entregue el backend. Enviar el objeto completo `PushSubscription` a la
-   futura ruta de registro. La clave privada VAPID solo debe existir como secreto en
-   Render, nunca en el frontend ni en `VITE_*`.
+   VAPID del backend. Enviar el objeto completo `PushSubscription` a la ruta de registro.
+   La clave privada VAPID solo debe existir como secreto en Render, nunca en el
+   frontend ni en `VITE_*`.
 4. Al cerrar sesión o desactivar push, desuscribir ese dispositivo y avisar a la
-   futura ruta de baja. Permitir varios dispositivos por usuario y no eliminar
-   suscripciones de otras cuentas.
+   ruta de baja. Permitir varios dispositivos por usuario y no eliminar suscripciones
+   de otras cuentas.
 5. En el service worker, manejar `push` y `notificationclick`; al tocar el aviso,
    abrir la agenda y navegar al centro de notificaciones. Validar que la URL destino
    sea del mismo origen de la aplicación.
@@ -279,20 +276,54 @@ en el backend.
    soporte y permisos en iOS, Android y escritorio; no prometer push si el navegador
    no lo admite.
 
-### Contrato pendiente del backend para push
+### Contrato del backend para push
 
-- Definir las rutas exactas para registrar/eliminar una `PushSubscription`. Deben
-  autenticar al usuario, validar endpoint y claves, vincular el registro a
-  `req.user.id` (no confiar en un ID enviado por el cliente) y limitar bajas a los
-  dispositivos de esa cuenta.
-- Guardar las suscripciones de manera persistente y enviar un push cuando se cree una
-  notificación VIP. El payload no debe incluir datos personales sensibles; la bandeja
-  del backend continúa siendo la fuente de verdad.
-- Configurar clave privada, clave pública y contacto VAPID según el diseño acordado.
-  La clave privada y cualquier secreto deben guardarse solo en Render; la clave
-  pública podrá entregarse al frontend mediante el contrato acordado.
-- Definir caducidad, reintentos, borrado de suscripciones vencidas y respuestas de
-  error. Probar aislamiento con distintas cuentas y dispositivos.
+Las rutas están bajo `/api/notificaciones/push`. Las rutas de registro y baja requieren
+`Authorization: Bearer <access_token>` de Supabase. El backend obtiene la cuenta del
+token; no aceptar ni enviar `docente_id` desde el frontend.
+
+1. `GET /api/notificaciones/push/vapid-public-key`
+   - No requiere autenticación.
+   - Respuesta `200`: `{"publicKey":"<clave pública VAPID>"}`.
+   - Respuesta `503`: `{"error":"...","code":"PUSH_NOT_CONFIGURED"}` si faltan o no
+     son válidas las variables VAPID.
+2. `POST /api/notificaciones/push/suscripciones`
+   - Requiere autenticación; enviar el objeto completo devuelto por
+     `PushSubscription.toJSON()` como cuerpo JSON, incluyendo `endpoint`, `keys.p256dh`,
+     `keys.auth` y `expirationTime` (puede ser `null`).
+   - Respuesta `201` al registrar o `200` al actualizar el dispositivo:
+     `{"registered":true}`.
+   - Respuestas `400` para estructura/endpoint/claves inválidas, `401` para sesión
+     inválida, `409` si el endpoint ya pertenece a otra cuenta y `503` si Push no está
+     configurado.
+3. `DELETE /api/notificaciones/push/suscripciones`
+   - Requiere autenticación; cuerpo JSON: `{"endpoint":"<endpoint de ese dispositivo>"}`.
+   - El frontend primero debe llamar `subscription.unsubscribe()` y luego avisar al
+     backend. La baja solo elimina el endpoint si pertenece al usuario autenticado;
+     es idempotente.
+   - Respuesta `200`: `{"deleted":true}` si se eliminó o `{"deleted":false}` si ya no
+     estaba registrado para esa cuenta. Nunca elimina dispositivos de otra cuenta.
+
+Configurar en Render `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` y `VAPID_SUBJECT`
+(`mailto:correo-de-soporte@dominio.com` o una URL HTTPS). Generar el par con
+`npx web-push generate-vapid-keys`; guardar la clave privada solo como secreto de
+Render. La clave pública también se configura en Render para que la API la entregue;
+no codificar ninguna clave en `VITE_*`.
+
+El backend valida HTTPS, proveedores push compatibles, endpoint y formato/tamaño de
+las claves; cada endpoint solo puede pertenecer a una cuenta. Las suscripciones y la
+cola de entrega se guardan en Supabase. Se envía un payload genérico al crear un aviso
+VIP y no se incluyen nombre, email, plan ni otros datos personales. Las respuestas
+HTTP `404`/`410` eliminan endpoints vencidos; los errores temporales admiten hasta
+cinco intentos totales con espera creciente, desde el job de 15 minutos. También se
+limpian suscripciones con fecha de expiración vencida. El centro
+`GET /api/notificaciones` sigue siendo la fuente de verdad.
+
+Antes de habilitar el flujo, ejecutar una sola vez
+`schema/migrations/20261107_web_push_notifications.sql` en Supabase y configurar las
+variables VAPID en Render. Sin VAPID configurado, el endpoint de clave pública
+responderá `503`; no activar el flujo del frontend hasta que también esté aplicada la
+migración.
 
 ## 9. Email y publicación
 
@@ -313,8 +344,9 @@ configuradas en producción; no presentar los emails como activos.
   como `Authorization: Bearer ...`; sin eso el backend responde `401`.
 - Las llamadas de pagos y administración del frontend ya envían un token cuando hay
   sesión, pero deben usar `BACKEND_URL` configurable y verificar que no sea `null`.
-- En `src/main.jsx`, el registro del service worker está comentado. No hay push todavía;
-  primero implementar la bandeja dentro de la app con `/notificaciones`.
+- En `src/main.jsx`, el registro del service worker está comentado. El backend ya tiene
+  el contrato push de la sección 8, pero falta la integración del service worker y el
+  flujo de activación en el frontend. La campana/bandeja dentro de la app es independiente.
 
 Antes de publicar:
 

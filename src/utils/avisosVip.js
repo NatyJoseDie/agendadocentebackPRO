@@ -28,8 +28,8 @@ export function esDocenteVipBeta(docente) {
   if (docente.is_vip_beta === true) return true
 
   const tienePlanPago =
-    ['pro', 'premium'].includes(docente.plan) ||
-    ['pro', 'premium'].includes(docente.subscription_plan)
+    ['pro', 'premium', 'basico'].includes(docente.plan) ||
+    ['pro', 'premium', 'basico'].includes(docente.subscription_plan)
   if (!tienePlanPago || !docente.created_at || !docente.trial_ends_at) return false
 
   const creado = new Date(docente.created_at)

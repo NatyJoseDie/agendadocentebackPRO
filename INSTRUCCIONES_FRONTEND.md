@@ -188,6 +188,9 @@ con `ADMIN_EMAILS` configurado en Render:
 - `POST /api/admin/modificar-docente` con `docente_id` y `nuevo_plan`
   (`gratuito`, `free`, `pro` o `premium`), `dias_extra` (entero de 1 a 3650), o ambos.
 
+En el resumen de métricas, `countBasico` cuenta las cuentas del plan Básico.
+La clasificación VIP usa `is_vip_beta`, no la duración de la suscripción.
+
 `nuevo_plan: "free"` se normaliza a `"gratuito"`. Un usuario que no sea administrador
 recibe `403`; ocultar controles en la interfaz no reemplaza esta validación del
 backend.

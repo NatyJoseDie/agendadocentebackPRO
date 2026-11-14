@@ -1,7 +1,7 @@
 import { supabaseAdmin } from '../config/supabase.js'
 
 const GRACE_PERIOD_MS = 30 * 24 * 60 * 60 * 1000
-const PAID_PLANS = new Set(['pro', 'premium'])
+const PAID_PLANS = new Set(['pro', 'premium', 'basico'])
 
 export const requireWritable = async (req, res, next) => {
   try {

@@ -16,6 +16,36 @@ API REST que sirve al frontend de Agenda Docente PRO. Gestiona autenticación (v
 
 ---
 
+### 📅 8 de Noviembre de 2026 — 11:52 (Argentina)
+
+#### ✅ Migración push y VAPID verificados en producción
+
+- La usuaria confirmó que ejecutó en Supabase `schema/migrations/20261107_web_push_notifications.sql` y que cargó las variables VAPID en Render.
+- Verificado en producción: `/api/health` responde HTTP 200 y `/api/health/ready` responde `ready` con Supabase disponible.
+- Verificado `GET /api/notificaciones/push/vapid-public-key`: responde HTTP 200 y entrega la clave pública (sin exponerla en este README).
+- La configuración backend para push está lista. Falta integrar el service worker y la activación de notificaciones en el frontend, y probar la recepción en un dispositivo real.
+- La clave privada VAPID debe permanecer solo como secreto en Render; no guardarla en Git ni en el frontend.
+
+---
+
+### 📅 7 de Noviembre de 2026 — 15:17 (Argentina)
+
+#### 🔔 Implementación y publicación del contrato Web Push
+
+- Implementados y publicados en `main` los endpoints de push y la cola de envíos por dispositivo. Commit: `fb5c21b` (`feat: implement web push notification contract`).
+- Contrato para el frontend:
+  - `GET /api/notificaciones/push/vapid-public-key` entrega la clave pública configurada.
+  - `POST /api/notificaciones/push/suscripciones` registra o actualiza el dispositivo usando el `access_token` de Supabase.
+  - `DELETE /api/notificaciones/push/suscripciones` elimina solo la suscripción que pertenezca a la cuenta autenticada.
+- Añadidos validación de endpoints HTTPS y claves, persistencia aislada por cuenta, envío de avisos VIP con payload genérico, reintentos y limpieza de suscripciones vencidas.
+- Actualizada `INSTRUCCIONES_FRONTEND.md` con cuerpos, respuestas, errores y requisitos para integrar el service worker.
+- Verificación local: las 14 pruebas pasan; el servidor carga correctamente. El endpoint de salud de producción respondió HTTP 200 después del push a GitHub.
+- Al momento de esta implementación todavía faltaban la migración de Supabase y las variables VAPID en Render; su estado más reciente está registrado en la entrada del 7 de noviembre a las 15:18.
+- Las claves VAPID no se guardan en este repositorio ni en el frontend. El par compartido accidentalmente en la conversación debe descartarse; generar un par nuevo y mantener la clave privada solo en Render.
+- Sigue pendiente la integración del service worker y la interfaz de activación en el frontend. La campana y la bandeja dentro de la app son independientes de Web Push.
+
+---
+
 ### 📅 7 de Noviembre de 2026 — 14:01 (Argentina)
 
 #### 🔔 Contrato backend para notificaciones push

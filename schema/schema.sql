@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS docentes (
   apellido     TEXT,
   avatar_url   TEXT,
   rol          TEXT NOT NULL CHECK (rol IN ('maestro', 'profesor')),
+  is_admin     BOOLEAN NOT NULL DEFAULT FALSE,
   escuela      TEXT,
   provincia    TEXT DEFAULT 'Buenos Aires',
   turno        TEXT CHECK (turno IN ('mañana', 'tarde', 'noche', 'completo')),

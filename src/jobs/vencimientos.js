@@ -22,6 +22,15 @@ const ADMIN_EMAILS = [
 
 const DIAS_GRACIA = 30
 
+function perfilEsAdmin(docente = {}) {
+  if (!docente || typeof docente !== 'object') return false
+
+  const rol = String(docente.rol || '').trim().toLowerCase()
+  const isAdminFlag = Boolean(docente.is_admin)
+
+  return isAdminFlag || rol === 'admin' || rol === 'super_admin' || rol === 'fundadora'
+}
+
 /**
  * Procesa los vencimientos de suscripciones.
  * Devuelve un resumen de las acciones realizadas.
@@ -52,16 +61,16 @@ export async function procesarVencimientos() {
     let countDegradados = 0
     let countOk = 0
     const avisos = await procesarAvisosVip(
-      docentes.filter((docente) => !ADMIN_EMAILS.includes(docente.email?.toLowerCase())),
+      docentes.filter((docente) => !perfilEsAdmin(docente)),
       ahora,
     )
 
     for (const docente of docentes) {
       // Nunca tocar a los admins/fundadora ni cuentas que no tengan plan pago.
-      if (ADMIN_EMAILS.includes(docente.email?.toLowerCase())) continue
+      if (perfilEsAdmin(docente)) continue
       const tienePlanPago =
-        ['pro', 'premium'].includes(docente.plan) ||
-        ['pro', 'premium'].includes(docente.subscription_plan)
+        ['pro', 'premium', 'basico'].includes(docente.plan) ||
+        ['pro', 'premium', 'basico'].includes(docente.subscription_plan)
       if (!tienePlanPago) continue
 
       const vencimiento = new Date(docente.trial_ends_at)

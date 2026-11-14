@@ -6,58 +6,90 @@ import { verifyMercadoPagoSignature } from '../utils/mercadopagoWebhook.js'
 
 const router = Router()
 
-// 🚀 Precios de Lanzamiento (Vigencia 6 meses)
-const PLANES_CONFIG = {
-  pro_mensual: {
-    title: 'Agenda Docente - Plan PRO (Mensual)',
-    price: 3500,
-    planKey: 'pro',
-    diasVigencia: 30,
-    ciclo: 'mensual',
-  },
-  pro_anual: {
-    title: 'Agenda Docente - Plan PRO (Anual - ¡64% OFF Lanzamiento!)',
-    price: 15000,
-    planKey: 'pro',
-    diasVigencia: 365,
-    ciclo: 'anual',
-  },
-  premium_mensual: {
-    title: 'Agenda Docente - Plan PREMIUM (Mensual)',
-    price: 5000,
-    planKey: 'premium',
-    diasVigencia: 30,
-    ciclo: 'mensual',
-  },
-  premium_anual: {
-    title: 'Agenda Docente - Plan PREMIUM (Anual - ¡60% OFF Lanzamiento!)',
-    price: 24000,
-    planKey: 'premium',
-    diasVigencia: 365,
-    ciclo: 'anual',
-  },
+const PLAN_IDS = [
+  'pro_mensual', 'pro_ciclo_lectivo',
+  'premium_mensual', 'premium_ciclo_lectivo',
+  'basico_mensual', 'basico_ciclo_lectivo'
+]
+const VALID_PLANS = new Set(['pro', 'premium', 'basico'])
+const VALID_CICLOS = new Set(['mensual', 'ciclo_lectivo'])
+
+async function fetchPlanesFromDB() {
+  const { data, error } = await supabaseAdmin
+    .from('planes_precios')
+    .select('id, plan, ciclo, titulo, precio, precio_promocional, promo_hasta, activo')
+    .in('id', PLAN_IDS)
+    .order('plan', { ascending: true })
+    .order('ciclo', { ascending: true })
+
+  if (error) throw error
+  return data || []
 }
+
+function calcularPrecioVigente(plan) {
+  const ahora = new Date()
+  const enPromocion = plan.activo && plan.precio_promocional && plan.promo_hasta && new Date(plan.promo_hasta) > ahora
+  return {
+    ...plan,
+    en_promocion: enPromocion,
+    precio_vigente: enPromocion ? Number(plan.precio_promocional) : Number(plan.precio),
+  }
+}
+
+function calcularExpiraCicloLectivo(fechaPago) {
+  const fp = new Date(fechaPago)
+  const mes = fp.getMonth() + 1
+  const anio = fp.getFullYear()
+
+  let finCiclo
+  if (mes >= 10) {
+    finCiclo = new Date(anio + 1, 11, 31, 23, 59, 59)
+  } else {
+    finCiclo = new Date(anio, 11, 31, 23, 59, 59)
+  }
+  return finCiclo.toISOString()
+}
+
+/**
+ * GET /api/pagos/planes (público)
+ * Devuelve los 4 planes con precios vigentes y estado de promoción
+ */
+router.get('/planes', async (_req, res) => {
+  try {
+    const planes = await fetchPlanesFromDB()
+    const planesConPrecio = planes.map(calcularPrecioVigente)
+    res.json({ planes: planesConPrecio })
+  } catch (err) {
+    console.error('❌ Error al obtener planes:', err)
+    res.status(500).json({ error: 'No se pudieron obtener los planes.' })
+  }
+})
 
 /**
  * POST /api/pagos/crear-preferencia
  * Genera el link de pago en Mercado Pago para el plan y ciclo elegido
- * Body: { plan: 'pro' | 'premium', ciclo: 'mensual' | 'anual' }
+ * Body: { plan: 'pro'|'premium'|'basico', ciclo: 'mensual'|'ciclo_lectivo' }
  */
 router.post('/crear-preferencia', (req, _res, next) => {
   req.skipSubscriptionWriteCheck = true
   next()
 }, requireAuth, async (req, res) => {
   try {
-    const { plan = 'pro', ciclo = 'anual' } = req.body || {}
+    const { plan = 'pro', ciclo = 'ciclo_lectivo' } = req.body || {}
 
-    const configKey = `${plan}_${ciclo}`
-    const planSeleccionado = PLANES_CONFIG[configKey]
-
-    if (!planSeleccionado) {
+    if (!VALID_PLANS.has(plan) || !VALID_CICLOS.has(ciclo)) {
       return res.status(400).json({
-        error: `Combinación inválida. Plan: ${plan}, Ciclo: ${ciclo}. Opciones válidas: pro_mensual, pro_anual, premium_mensual, premium_anual`,
+        error: `Combinación inválida. Plan: ${plan}, Ciclo: ${ciclo}. Opciones válidas: basico_mensual, basico_ciclo_lectivo, pro_mensual, pro_ciclo_lectivo, premium_mensual, premium_ciclo_lectivo`,
       })
     }
+
+    const planes = await fetchPlanesFromDB()
+    const planDB = planes.find(p => p.plan === plan && p.ciclo === ciclo && p.activo)
+    if (!planDB) {
+      return res.status(404).json({ error: 'Plan no encontrado o inactivo.' })
+    }
+
+    const { en_promocion, precio_vigente } = calcularPrecioVigente(planDB)
 
     if (!process.env.MERCADO_PAGO_ACCESS_TOKEN) {
       return res.status(503).json({
@@ -81,14 +113,25 @@ router.post('/crear-preferencia', (req, _res, next) => {
       return res.status(503).json({ error: 'Las URL públicas de pagos deben usar HTTPS en producción.' })
     }
 
+    let diasVigencia
+    let expiraAtParaRPC = null
+
+    if (ciclo === 'mensual') {
+      diasVigencia = 30
+    } else {
+      const ahora = new Date()
+      diasVigencia = Math.ceil((new Date(calcularExpiraCicloLectivo(ahora)) - ahora) / (1000 * 60 * 60 * 24))
+      expiraAtParaRPC = calcularExpiraCicloLectivo(ahora)
+    }
+
     const preferenceData = {
       items: [
         {
-          id: `plan_${configKey}`,
-          title: planSeleccionado.title,
-          description: `Suscripción ${planSeleccionado.ciclo} a ${planSeleccionado.title}`,
+          id: `plan_${plan}_${ciclo}`,
+          title: planDB.titulo,
+          description: `Suscripción ${ciclo} a ${planDB.titulo}`,
           quantity: 1,
-          unit_price: Number(planSeleccionado.price),
+          unit_price: precio_vigente,
           currency_id: 'ARS',
         },
       ],
@@ -97,9 +140,10 @@ router.post('/crear-preferencia', (req, _res, next) => {
       },
       external_reference: JSON.stringify({
         docente_id: req.user.id,
-        plan: planSeleccionado.planKey,
-        ciclo: planSeleccionado.ciclo,
-        diasVigencia: planSeleccionado.diasVigencia,
+        plan,
+        ciclo,
+        diasVigencia,
+        expira_at: expiraAtParaRPC,
         email: req.user.email,
       }),
       back_urls: {
@@ -122,14 +166,25 @@ router.post('/crear-preferencia', (req, _res, next) => {
       return res.status(502).json({ error: 'Mercado Pago no generó el enlace de pago.' })
     }
 
+    await supabaseAdmin
+      .from('intenciones_pago')
+      .insert({
+        docente_id: req.user.id,
+        plan,
+        ciclo,
+        precio: precio_vigente,
+        mp_preference_id: response.id,
+      })
+
     res.json({
       id: response.id,
       init_point: checkoutUrl,
       checkout_url: checkoutUrl,
       sandbox_init_point: response.sandbox_init_point,
-      plan: planSeleccionado.planKey,
-      ciclo: planSeleccionado.ciclo,
-      precio: planSeleccionado.price,
+      plan,
+      ciclo,
+      precio: precio_vigente,
+      en_promocion,
     })
   } catch (err) {
     console.error('❌ Error al crear preferencia de Mercado Pago:', err)
@@ -187,19 +242,32 @@ router.post('/webhook', async (req, res) => {
           return res.status(200).send('Referencia inválida')
         }
 
-        const { docente_id, plan, ciclo, diasVigencia } = meta || {}
-        const config = PLANES_CONFIG[`${plan}_${ciclo}`]
+        const { docente_id, plan, ciclo, diasVigencia, expira_at } = meta || {}
 
         if (
           typeof docente_id !== 'string' ||
           !/^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i.test(docente_id) ||
-          !config ||
-          Number(diasVigencia) !== config.diasVigencia ||
-          Number(paymentInfo.transaction_amount) !== config.price ||
+          !VALID_PLANS.has(plan) ||
+          !VALID_CICLOS.has(ciclo) ||
+          typeof diasVigencia !== 'number' ||
+          Number(paymentInfo.transaction_amount) <= 0 ||
           paymentInfo.currency_id !== 'ARS'
         ) {
           console.error(`❌ El pago ${paymentId} no coincide con un plan, precio o moneda válidos.`)
           return res.status(200).send('Pago no válido')
+        }
+
+        const planes = await fetchPlanesFromDB()
+        const planDB = planes.find(p => p.plan === plan && p.ciclo === ciclo && p.activo)
+        if (!planDB) {
+          console.error(`❌ Plan ${plan}_${ciclo} no encontrado o inactivo.`)
+          return res.status(200).send('Plan no válido')
+        }
+
+        const { precio_vigente } = calcularPrecioVigente(planDB)
+        if (Number(paymentInfo.transaction_amount) !== precio_vigente) {
+          console.error(`❌ El pago ${paymentId} monto ${paymentInfo.transaction_amount} ≠ precio vigente ${precio_vigente}.`)
+          return res.status(200).send('Monto no válido')
         }
 
         const fechaPago = paymentInfo.date_approved || paymentInfo.date_created || new Date().toISOString()
@@ -219,7 +287,8 @@ router.post('/webhook', async (req, res) => {
             p_plan: plan,
             p_ciclo: ciclo,
             p_fecha_pago: fechaPago,
-            p_dias: config.diasVigencia,
+            p_dias: diasVigencia,
+            p_expira_at: expira_at || null,
           },
         )
 

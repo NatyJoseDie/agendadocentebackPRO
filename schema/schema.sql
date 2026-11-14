@@ -302,6 +302,8 @@ CREATE TABLE IF NOT EXISTS pagos (
 
 ALTER TABLE pagos ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "docentes_ver_sus_pagos" ON pagos FOR SELECT USING (auth.uid() = docente_id);
+GRANT SELECT ON pagos TO authenticated;
+GRANT ALL ON pagos TO service_role;
 
 -- ─────────────────────────────────────────
 -- 13. TABLA: notificaciones_docente

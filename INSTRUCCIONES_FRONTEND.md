@@ -328,7 +328,30 @@ variables VAPID en Render. Sin VAPID configurado, el endpoint de clave pública
 responderá `503`; no activar el flujo del frontend hasta que también esté aplicada la
 migración.
 
-## 9. Email y publicación
+## 9. Mensajes internos entre docentes y administración
+
+La bandeja principal del docente es `GET /api/mensajes`. Devuelve en un único
+listado tanto los mensajes enviados por el admin como las consultas iniciadas por
+el docente. Cada elemento incluye `origen` (`admin` o `docente`), `leida_at` y
+`ultima_actividad_at`. `GET /api/mensajes/no-leidos` suma ambos tipos de mensajes.
+
+Abrir una conversación o responderla desde la bandeja unificada se hace con:
+
+- `GET /api/mensajes/:id`
+- `POST /api/mensajes/:id/responder` con `{ "cuerpo": "..." }`
+
+Para iniciar una consulta al admin usar `POST /api/mensajes/docente-admin` con
+`titulo` y `cuerpo`. Los endpoints `docente-admin` existentes siguen disponibles.
+
+El admin puede responder consultas desde
+`POST /api/mensajes/admin/docente-admin/:id/responder` o desde
+`POST /api/mensajes/:id/responder`. Cada respuesta del admin marca nuevamente la
+consulta como no leída para el docente; al abrirla se limpia ese estado.
+
+Antes de publicar este flujo, ejecutar
+`schema/migrations/20261118_mensajes_docente_respuesta_leida.sql`.
+
+## 10. Email y publicación
 
 El backend tiene integración opcional con Resend, pero el email no queda habilitado
 hasta configurar en Render `RESEND_API_KEY` y `RESEND_FROM_EMAIL` con un remitente

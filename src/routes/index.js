@@ -18,6 +18,7 @@ import ocrRouter from './ocr.js'
 import pagosRouter from './pagos.js'
 import adminRouter from './admin.js'
 import notificacionesRouter from './notificaciones.js'
+import mensajesRouter from './mensajes.js'
 
 const router = Router()
 
@@ -40,5 +41,6 @@ router.use('/ocr', ocrRouter)
 router.use('/pagos', pagosRouter)
 router.use('/admin', adminRouter)
 router.use('/notificaciones', notificacionesRouter)
+router.use('/mensajes', mensajesRouter)
 
 export default router

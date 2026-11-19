@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '../config/supabase.js'
 import { procesarAvisosVip } from '../services/avisosVip.js'
 import { procesarColaPush } from '../services/notificacionesPush.js'
+import { procesarAvisosCalendario } from '../services/avisosCalendario.js'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CRON JOB: Vencimiento de suscripciones
@@ -154,9 +155,17 @@ export function iniciarCronVencimientos() {
   }, INTERVALO_MS)
   intervalo.unref?.()
 
-  void procesarColaPush()
+  const ciclo = async () => {
+    try {
+      await procesarAvisosCalendario()
+    } catch (error) {
+      console.error('❌ [Avisos calendario] Error inesperado:', error.message)
+    }
+    await procesarColaPush()
+  }
+  void ciclo()
   const intervaloPush = setInterval(() => {
-    void procesarColaPush()
+    void ciclo()
   }, INTERVALO_PUSH_MS)
   intervaloPush.unref?.()
 }

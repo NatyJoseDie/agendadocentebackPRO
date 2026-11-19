@@ -31,7 +31,7 @@ function perfilEsAdmin(perfil = {}) {
   return isAdminFlag || rol === 'admin' || rol === 'super_admin' || rol === 'fundadora'
 }
 
-async function esUsuarioAdminDesdeDb({ id, email }) {
+export async function esUsuarioAdminDesdeDb({ id, email }) {
   const safeEmail = email?.trim().toLowerCase()
 
   if (safeEmail && ADMIN_EMAILS.includes(safeEmail)) {
@@ -66,7 +66,7 @@ async function esUsuarioAdminDesdeDb({ id, email }) {
   }
 }
 
-const requireAdmin = async (req, res, next) => {
+export const requireAdmin = async (req, res, next) => {
   const email = req.user?.email?.toLowerCase()
   const id = req.user?.id
 
